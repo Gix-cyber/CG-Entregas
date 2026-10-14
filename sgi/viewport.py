@@ -31,3 +31,13 @@ class Viewport:
         y_viewport = self.ymin + (1 - y_normalizado) * self.altura
 
         return x_viewport, y_viewport
+
+    #inverso do transformar, canva -> mundo (usado p achar o obj sob o mouse)
+    def para_mundo(self, window: Window, x_viewport: float, y_viewport: float) -> Tuple[float, float]:
+        x_normalizado = (x_viewport - self.xmin) / self.largura
+        y_normalizado = 1 - (y_viewport - self.ymin) / self.altura
+
+        x = window.xmin + x_normalizado * window.largura
+        y = window.ymin + y_normalizado * window.altura
+
+        return x, y
