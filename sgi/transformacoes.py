@@ -136,13 +136,21 @@ class Transformacao:
 
 
 class Translacao(Transformacao):
+    #dx e dy sao nos eixos da tela, ou seja, respeitam o "p cima" do usuario.
+    #c a window rotacionada o deslocamento é girado pelo angulo dela antes de virar WC
 
-    def __init__(self, dx: float, dy: float):
+    def __init__(self, dx: float, dy: float, angulo_window: float = 0.0):
         self.dx = dx
         self.dy = dy
+        self.angulo_window = angulo_window
 
     def matriz(self, centro_objeto: Coordenada) -> Matriz:
-        return preparar_translacao(self.dx, self.dy)
+        dx_mundo, dy_mundo = transformar_ponto(
+            (self.dx, self.dy),
+            matriz_rotacao(self.angulo_window),
+        )
+
+        return preparar_translacao(dx_mundo, dy_mundo)
 
     def descricao(self) -> str:
         return f"Translação ({self.dx:g}, {self.dy:g})"

@@ -34,8 +34,10 @@ class DialogoTransformacao:
         objeto: ObjetoGrafico,
         ao_aplicar: Callable[[], None],
         aba_inicial: int = ABA_TRANSLACAO,
+        angulo_window: float = 0.0,
     ):
         self.objeto = objeto
+        self.angulo_window = angulo_window
         self.ao_aplicar = ao_aplicar
         self.transformacoes: List[Transformacao] = []
 
@@ -72,8 +74,16 @@ class DialogoTransformacao:
         self.translacao_dx = self._criar_campo(aba, "dx:", "0", 0)
         self.translacao_dy = self._criar_campo(aba, "dy:", "0", 1)
 
+        ttk.Label(aba, text="Nos eixos da tela (para cima do usuário)").grid(
+            row=2,
+            column=0,
+            columnspan=2,
+            sticky=tk.W,
+            pady=(4, 0),
+        )
+
         botao = ttk.Button(aba, text="Adicionar à lista", command=self._adicionar_translacao)
-        botao.grid(row=2, column=0, columnspan=2, sticky=tk.EW, pady=(8, 0))
+        botao.grid(row=3, column=0, columnspan=2, sticky=tk.EW, pady=(8, 0))
 
     def _criar_aba_escalonamento(self) -> None:
         aba = ttk.Frame(self.abas, padding=8)
@@ -168,7 +178,7 @@ class DialogoTransformacao:
         try:
             dx = float(self.translacao_dx.get())
             dy = float(self.translacao_dy.get())
-            transformacao = Translacao(dx, dy)
+            transformacao = Translacao(dx, dy, self.angulo_window)
         except ValueError as erro:
             self._mostrar_erro(erro)
             return

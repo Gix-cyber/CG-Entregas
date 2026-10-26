@@ -15,6 +15,10 @@ class ObjetoGrafico:
         self.coordenadas = list(coordenadas)
         self.cor = cor
 
+        # cache das coordenadas em SCN, recalculada pelo display file sempre q a window muda.
+        # as coordenadas do mundo (WC) n mudam c a navegacao
+        self.coordenadas_normalizadas: List[Coordenada] = list(coordenadas)
+
     #tkinter so entende a cor como string hex
     def cor_hex(self) -> str:
         r, g, b = self.cor
@@ -33,8 +37,15 @@ class ObjetoGrafico:
 
         return soma_x / quantidade, soma_y / quantidade
 
-    #segmnetos de reta q compoem o obj
+    #segmnetos de reta q compoem o obj, em WC
     def segmentos(self) -> List[Tuple[Coordenada, Coordenada]]:
+        return self._segmentos_de(self.coordenadas)
+
+    #msm segmentos, mas em SCN (é o q vai p transformada de viewport)
+    def segmentos_normalizados(self) -> List[Tuple[Coordenada, Coordenada]]:
+        return self._segmentos_de(self.coordenadas_normalizadas)
+
+    def _segmentos_de(self, coordenadas: List[Coordenada]) -> List[Tuple[Coordenada, Coordenada]]:
         return []
 
     def descricao(self) -> str:
@@ -58,9 +69,9 @@ class Reta(ObjetoGrafico):
             raise ValueError("Uma reta precisa de exatamente 2 coordenadas.")
         super().__init__(nome, coordenadas, cor)
 
-    def segmentos(self) -> List[Tuple[Coordenada, Coordenada]]:
-        inicio = self.coordenadas[0]
-        fim = self.coordenadas[1]
+    def _segmentos_de(self, coordenadas: List[Coordenada]) -> List[Tuple[Coordenada, Coordenada]]:
+        inicio = coordenadas[0]
+        fim = coordenadas[1]
         return [(inicio, fim)]
 
 
@@ -75,13 +86,13 @@ class Wireframe(ObjetoGrafico):
 
         super().__init__(nome, coordenadas, cor)
 
-    def segmentos(self) -> List[Tuple[Coordenada, Coordenada]]:
+    def _segmentos_de(self, coordenadas: List[Coordenada]) -> List[Tuple[Coordenada, Coordenada]]:
         segmentos = []
-        quantidade = len(self.coordenadas)
+        quantidade = len(coordenadas)
 
         for indice in range(quantidade):
-            inicio = self.coordenadas[indice]
-            fim = self.coordenadas[(indice + 1) % quantidade]
+            inicio = coordenadas[indice]
+            fim = coordenadas[(indice + 1) % quantidade]
             segmentos.append((inicio, fim))
 
         return segmentos

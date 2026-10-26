@@ -1,6 +1,9 @@
 from typing import Tuple
 
-from sgi.window import Window
+
+#a window em SCN é sempre o quadrado [-1, 1] x [-1, 1]
+SCN_MIN = -1.0
+SCN_MAX = 1.0
 
 
 class Viewport:
@@ -22,22 +25,22 @@ class Viewport:
         self.xmax = self.xmin + largura
         self.ymax = self.ymin + altura
 
-    #coordenada do mundo -> coordenada do canva. Lembra q eixo y cresce p baixo no canva
-    def transformar(self, window: Window, x: float, y: float) -> Tuple[float, float]:
-        x_normalizado = (x - window.xmin) / window.largura
-        y_normalizado = (y - window.ymin) / window.altura
+    #coordenada em SCN -> coordenada do canva. Lembra q eixo y cresce p baixo no canva
+    def transformar(self, x_normalizado: float, y_normalizado: float) -> Tuple[float, float]:
+        fracao_x = (x_normalizado - SCN_MIN) / (SCN_MAX - SCN_MIN)
+        fracao_y = (y_normalizado - SCN_MIN) / (SCN_MAX - SCN_MIN)
 
-        x_viewport = self.xmin + x_normalizado * self.largura
-        y_viewport = self.ymin + (1 - y_normalizado) * self.altura
+        x_viewport = self.xmin + fracao_x * self.largura
+        y_viewport = self.ymin + (1 - fracao_y) * self.altura
 
         return x_viewport, y_viewport
 
-    #inverso do transformar, canva -> mundo (usado p achar o obj sob o mouse)
-    def para_mundo(self, window: Window, x_viewport: float, y_viewport: float) -> Tuple[float, float]:
-        x_normalizado = (x_viewport - self.xmin) / self.largura
-        y_normalizado = 1 - (y_viewport - self.ymin) / self.altura
+    #inverso do transformar, canva -> SCN
+    def para_normalizado(self, x_viewport: float, y_viewport: float) -> Tuple[float, float]:
+        fracao_x = (x_viewport - self.xmin) / self.largura
+        fracao_y = 1 - (y_viewport - self.ymin) / self.altura
 
-        x = window.xmin + x_normalizado * window.largura
-        y = window.ymin + y_normalizado * window.altura
+        x_normalizado = SCN_MIN + fracao_x * (SCN_MAX - SCN_MIN)
+        y_normalizado = SCN_MIN + fracao_y * (SCN_MAX - SCN_MIN)
 
-        return x, y
+        return x_normalizado, y_normalizado

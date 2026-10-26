@@ -1,5 +1,6 @@
+import math
 import tkinter as tk
-from tkinter import colorchooser, messagebox, ttk
+from tkinter import colorchooser, filedialog, messagebox, ttk
 
 from sgi.dialogo_transformacao import (
     ABA_ESCALONAMENTO,
@@ -7,8 +8,10 @@ from sgi.dialogo_transformacao import (
     ABA_TRANSLACAO,
     DialogoTransformacao,
 )
+from sgi.descritor_obj import escrever_mundo, ler_mundo
 from sgi.display_file import DisplayFile
 from sgi.objetos import COR_PADRAO, TIPOS, criar_objeto, interpretar_coordenadas
+from sgi.transformacoes import transformar_ponto
 from sgi.viewport import Viewport
 from sgi.window import Window
 
@@ -18,6 +21,9 @@ ALTURA_CANVAS = 600
 
 PASSO_PANNING = 0.1
 FATOR_ZOOM = 1.1
+
+# passo em graus do Shift + NumPad 4/6, igual ao blender
+PASSO_ROTACAO = 15
 
 COR_FUNDO = "white"
 COR_EIXOS = "#cccccc"
@@ -45,10 +51,22 @@ class Aplicacao:
         self._ultimo_arraste = None
         self.cor_selecionada = COR_PADRAO
 
+        self._criar_menu()
         self._criar_painel_lateral()
         self._criar_canvas()
         self._criar_atalhos()
         self._adicionar_objetos_de_exemplo()
+
+    def _criar_menu(self) -> None:
+        barra = tk.Menu(self.raiz)
+
+        menu_arquivo = tk.Menu(barra, tearoff=False)
+        menu_arquivo.add_command(label="Abrir mundo (.obj)...", command=self._abrir_mundo)
+        menu_arquivo.add_command(label="Importar .obj...", command=self._importar_obj)
+        menu_arquivo.add_command(label="Salvar mundo (.obj)...", command=self._salvar_mundo)
+
+        barra.add_cascade(label="Arquivo", menu=menu_arquivo)
+        self.raiz.configure(menu=barra)
 
     def _criar_painel_lateral(self) -> None:
         painel = ttk.Frame(self.raiz, padding=8)
@@ -153,6 +171,29 @@ class Aplicacao:
         botao_zoom_in.pack(side=tk.LEFT)
         botao_zoom_out.pack(side=tk.LEFT)
 
+        # rotacao é sempre em torno do centro da window, ent so precisa do angulo
+        rotacao = ttk.Frame(quadro)
+        rotacao.pack(pady=(4, 0))
+
+        ttk.Label(rotacao, text="Rotação (°):").pack(side=tk.LEFT)
+
+        self.entrada_angulo_window = ttk.Entry(rotacao, width=6)
+        self.entrada_angulo_window.insert(0, str(PASSO_ROTACAO))
+        self.entrada_angulo_window.pack(side=tk.LEFT, padx=(4, 0))
+        self.entrada_angulo_window.bind("<Return>", self._rotacionar_window_pelo_campo)
+
+        botao_rotacionar = ttk.Button(rotacao, text="Girar", command=self._rotacionar_window_pelo_campo)
+        botao_rotacionar.pack(side=tk.LEFT, padx=(4, 0))
+
+        giro = ttk.Frame(quadro)
+        giro.pack(pady=(4, 0))
+
+        botao_anti_horario = ttk.Button(giro, text="⟲", width=3, command=self._girar_anti_horario)
+        botao_horario = ttk.Button(giro, text="⟳", width=3, command=self._girar_horario)
+
+        botao_anti_horario.pack(side=tk.LEFT)
+        botao_horario.pack(side=tk.LEFT)
+
         self.rotulo_window = ttk.Label(quadro, justify=tk.LEFT)
         self.rotulo_window.pack(anchor=tk.W, pady=(4, 0))
 
@@ -207,6 +248,13 @@ class Aplicacao:
         self.canvas.bind("<s>", self._abrir_escalonamento)
         self.canvas.bind("<r>", self._abrir_rotacao)
 
+        # rotacao da window, Shift + NumPad 4/6 como no blender. C numlock ligado
+        # o shift faz o teclado mandar KP_Left/KP_Right, ent liga as duas formas
+        self.canvas.bind("<Shift-KP_4>", self._girar_anti_horario)
+        self.canvas.bind("<Shift-KP_Left>", self._girar_anti_horario)
+        self.canvas.bind("<Shift-KP_6>", self._girar_horario)
+        self.canvas.bind("<Shift-KP_Right>", self._girar_horario)
+
     def _adicionar_objetos_de_exemplo(self) -> None:
         exemplos = [
             ("wireframe", "quadrado", "(-100, -100),(100, -100),(100, 100),(-100, 100)", (0, 0, 255)),
@@ -225,6 +273,9 @@ class Aplicacao:
     def desenhar(self) -> None:
         self.canvas.delete("all")
 
+        # gera a descricao em SCN de todo o mundo antes de desenhar
+        self.display_file.normalizar(self.window.matriz_normalizacao())
+
         self._desenhar_eixos()
 
         nome_selecionado = self._nome_selecionado()
@@ -239,15 +290,29 @@ class Aplicacao:
 
         self._atualizar_rotulo_window()
 
+    #c a window rotacionada n da p usar os limites dela p cortar os eixos. Qlqr ponto da window
+    #ta a no max meia diagonal do centro, ent um trecho de uma diagonal p cada lado cobre ela toda
     def _desenhar_eixos(self) -> None:
-        self._desenhar_segmento((self.window.xmin, 0), (self.window.xmax, 0), COR_EIXOS)
-        self._desenhar_segmento((0, self.window.ymin), (0, self.window.ymax), COR_EIXOS)
+        centro_x, centro_y = self.window.centro
+        alcance = math.hypot(self.window.largura, self.window.altura)
 
+        eixo_x = ((centro_x - alcance, 0), (centro_x + alcance, 0))
+        eixo_y = ((0, centro_y - alcance), (0, centro_y + alcance))
+
+        matriz = self.window.matriz_normalizacao()
+
+        for inicio, fim in (eixo_x, eixo_y):
+            inicio_normalizado = transformar_ponto(inicio, matriz)
+            fim_normalizado = transformar_ponto(fim, matriz)
+
+            self._desenhar_segmento(inicio_normalizado, fim_normalizado, COR_EIXOS)
+
+    #desenha a partir da cache em SCN, as coordenadas em WC n sao tocadas
     def _desenhar_objeto(self, objeto, cor: str, espessura_extra: int) -> None:
-        segmentos = objeto.segmentos()
+        segmentos = objeto.segmentos_normalizados()
 
         if len(segmentos) == 0:
-            for coordenada in objeto.coordenadas:
+            for coordenada in objeto.coordenadas_normalizadas:
                 self._desenhar_ponto(coordenada, cor, espessura_extra)
 
             return
@@ -256,7 +321,7 @@ class Aplicacao:
             self._desenhar_segmento(inicio, fim, cor, ESPESSURA_LINHA + espessura_extra)
 
     def _desenhar_ponto(self, coordenada, cor: str, espessura_extra: int = 0) -> None:
-        x, y = self.viewport.transformar(self.window, coordenada[0], coordenada[1])
+        x, y = self.viewport.transformar(coordenada[0], coordenada[1])
 
         # n achei primitiva de ponto do tkinter nas docs(pedi p claude ele n achou tb),
         # ent vou usar uma linha de 1 pixel c ponta arrendondada pq é o + proximo de um ponto na tela
@@ -271,16 +336,19 @@ class Aplicacao:
         )
 
     def _desenhar_segmento(self, inicio, fim, cor: str, espessura: int = ESPESSURA_LINHA) -> None:
-        x1, y1 = self.viewport.transformar(self.window, inicio[0], inicio[1])
-        x2, y2 = self.viewport.transformar(self.window, fim[0], fim[1])
+        x1, y1 = self.viewport.transformar(inicio[0], inicio[1])
+        x2, y2 = self.viewport.transformar(fim[0], fim[1])
 
         self.canvas.create_line(x1, y1, x2, y2, fill=cor, width=espessura)
 
     def _atualizar_rotulo_window(self) -> None:
+        centro_x, centro_y = self.window.centro
+
         texto = (
             f"Window:\n"
-            f"  x: [{self.window.xmin:.1f}, {self.window.xmax:.1f}]\n"
-            f"  y: [{self.window.ymin:.1f}, {self.window.ymax:.1f}]"
+            f"  centro: ({centro_x:.1f}, {centro_y:.1f})\n"
+            f"  tamanho: {self.window.largura:.1f} x {self.window.altura:.1f}\n"
+            f"  ângulo: {self.window.angulo:.1f}°"
         )
         self.rotulo_window.configure(text=texto)
 
@@ -360,7 +428,8 @@ class Aplicacao:
 
         objeto = self.display_file.buscar(nome)
 
-        DialogoTransformacao(self.raiz, objeto, self.desenhar, aba)
+        # passa o angulo da window p translacao seguir o "p cima" do usuario
+        DialogoTransformacao(self.raiz, objeto, self.desenhar, aba, self.window.angulo)
 
     def _abrir_menu_de_contexto(self, evento) -> None:
         objeto = self._objeto_sob_o_mouse(evento.x, evento.y)
@@ -388,17 +457,17 @@ class Aplicacao:
         return mais_proximo
 
     def _distancia_ate_objeto(self, objeto, x: float, y: float) -> float:
-        segmentos = objeto.segmentos()
+        segmentos = objeto.segmentos_normalizados()
 
         if len(segmentos) == 0:
-            for coordenada in objeto.coordenadas:
+            for coordenada in objeto.coordenadas_normalizadas:
                 segmentos.append((coordenada, coordenada))
 
         menor = float("inf")
 
         for inicio, fim in segmentos:
-            x1, y1 = self.viewport.transformar(self.window, inicio[0], inicio[1])
-            x2, y2 = self.viewport.transformar(self.window, fim[0], fim[1])
+            x1, y1 = self.viewport.transformar(inicio[0], inicio[1])
+            x2, y2 = self.viewport.transformar(fim[0], fim[1])
 
             distancia = _distancia_ponto_segmento(x, y, x1, y1, x2, y2)
 
@@ -459,6 +528,26 @@ class Aplicacao:
         self.window.escalar(1 / FATOR_ZOOM)
         self.desenhar()
 
+    #o mundo aparece girando no sentido contrario ao da window
+    def _rotacionar_window(self, angulo: float) -> None:
+        self.window.rotacionar(angulo)
+        self.desenhar()
+
+    def _girar_anti_horario(self, evento=None) -> None:
+        self._rotacionar_window(PASSO_ROTACAO)
+
+    def _girar_horario(self, evento=None) -> None:
+        self._rotacionar_window(-PASSO_ROTACAO)
+
+    def _rotacionar_window_pelo_campo(self, evento=None) -> None:
+        try:
+            angulo = float(self.entrada_angulo_window.get())
+        except ValueError:
+            messagebox.showerror("Erro", "Informe um ângulo numérico para rotacionar a window.")
+            return
+
+        self._rotacionar_window(angulo)
+
     def _ao_rolar_mouse(self, evento) -> None:
         if evento.delta > 0:
             self._aproximar()
@@ -481,7 +570,8 @@ class Aplicacao:
         deslocamento_x = -pixels_x * self.window.largura / self.viewport.largura
         deslocamento_y = pixels_y * self.window.altura / self.viewport.altura
 
-        self.window.mover(deslocamento_x, deslocamento_y)
+        # o deslocamento ta nos eixos da tela, a window converte p WC c o angulo dela
+        self.window.mover_relativo(deslocamento_x, deslocamento_y)
         self._ultimo_arraste = (evento.x, evento.y)
         self.desenhar()
 
@@ -502,6 +592,70 @@ class Aplicacao:
         )
 
         self.desenhar()
+
+    def _abrir_mundo(self) -> None:
+        objetos = self._ler_obj("Abrir mundo")
+
+        if objetos is None:
+            return
+
+        self.display_file.limpar()
+        self._acrescentar_objetos(objetos)
+
+    def _importar_obj(self) -> None:
+        objetos = self._ler_obj("Importar .obj")
+
+        if objetos is None:
+            return
+
+        self._acrescentar_objetos(objetos)
+
+    def _ler_obj(self, titulo: str):
+        caminho = filedialog.askopenfilename(
+            title=titulo,
+            filetypes=[("Wavefront OBJ", "*.obj"), ("Todos os arquivos", "*")],
+            parent=self.raiz,
+        )
+
+        if not caminho:
+            return None
+
+        try:
+            return ler_mundo(caminho)
+        except Exception as erro:
+            messagebox.showerror("Erro", f"Não foi possível ler o arquivo:\n{erro}")
+            return None
+
+    #nomes repetidos ganham sufixo, pq o display file n aceita dois objs c o msm nome
+    def _acrescentar_objetos(self, objetos) -> None:
+        for objeto in objetos:
+            nome_original = objeto.nome
+            sufixo = 1
+
+            while self.display_file.buscar(objeto.nome) is not None:
+                sufixo += 1
+                objeto.nome = f"{nome_original}.{sufixo:03d}"
+
+            self.display_file.adicionar(objeto)
+
+        self._atualizar_lista_de_objetos()
+        self.desenhar()
+
+    def _salvar_mundo(self) -> None:
+        caminho = filedialog.asksaveasfilename(
+            title="Salvar mundo",
+            defaultextension=".obj",
+            filetypes=[("Wavefront OBJ", "*.obj")],
+            parent=self.raiz,
+        )
+
+        if not caminho:
+            return
+
+        try:
+            escrever_mundo(self.display_file, caminho)
+        except Exception as erro:
+            messagebox.showerror("Erro", f"Não foi possível salvar o arquivo:\n{erro}")
 
 
 def _distancia_ponto_segmento(px, py, x1, y1, x2, y2) -> float:
