@@ -72,25 +72,29 @@ class Aplicacao:
         painel = ttk.Frame(self.raiz, padding=8)
         painel.pack(side=tk.LEFT, fill=tk.Y)
 
-        self._criar_lista_de_objetos(painel)
-        self._criar_botoes_de_transformacao(painel)
-        self._criar_formulario_de_objeto(painel)
+        # o pack corta primeiro o ultimo widget empacotado qnd falta espaco, ent os quadros
+        # de baixo sao empacotados antes (side=BOTTOM) e a lista de objs por ultimo:
+        # assim é a lista q encolhe em telas baixas e a navegacao fica sempre visivel
         self._criar_controles_de_navegacao(painel)
+        self._criar_formulario_de_objeto(painel)
+        self._criar_botoes_de_transformacao(painel)
+        self._criar_lista_de_objetos(painel)
 
     def _criar_lista_de_objetos(self, painel: ttk.Frame) -> None:
         quadro = ttk.LabelFrame(painel, text="Objetos", padding=4)
-        quadro.pack(fill=tk.BOTH, expand=True)
+        quadro.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
-        self.lista_objetos = tk.Listbox(quadro, height=10, exportselection=False)
+        # o botao é empacotado antes da lista p n ser ele o cortado qnd falta espaco
+        botao_remover = ttk.Button(quadro, text="Remover selecionado", command=self._remover_objeto)
+        botao_remover.pack(side=tk.BOTTOM, fill=tk.X, pady=(4, 0))
+
+        self.lista_objetos = tk.Listbox(quadro, height=4, exportselection=False)
         self.lista_objetos.pack(fill=tk.BOTH, expand=True)
         self.lista_objetos.bind("<<ListboxSelect>>", self._ao_selecionar_objeto)
 
-        botao_remover = ttk.Button(quadro, text="Remover selecionado", command=self._remover_objeto)
-        botao_remover.pack(fill=tk.X, pady=(4, 0))
-
     def _criar_botoes_de_transformacao(self, painel: ttk.Frame) -> None:
         quadro = ttk.LabelFrame(painel, text="Transformar selecionado", padding=4)
-        quadro.pack(fill=tk.X, pady=(8, 0))
+        quadro.pack(side=tk.BOTTOM, fill=tk.X, pady=(8, 0))
 
         botao_transladar = ttk.Button(quadro, text="Transladar (G)", command=self._abrir_translacao)
         botao_escalonar = ttk.Button(quadro, text="Escalonar (S)", command=self._abrir_escalonamento)
@@ -102,7 +106,7 @@ class Aplicacao:
 
     def _criar_formulario_de_objeto(self, painel: ttk.Frame) -> None:
         quadro = ttk.LabelFrame(painel, text="Adicionar objeto (Shift+A)", padding=4)
-        quadro.pack(fill=tk.X, pady=8)
+        quadro.pack(side=tk.BOTTOM, fill=tk.X, pady=8)
 
         ttk.Label(quadro, text="Nome:").pack(anchor=tk.W)
         self.entrada_nome = ttk.Entry(quadro)
@@ -147,10 +151,14 @@ class Aplicacao:
 
     def _criar_controles_de_navegacao(self, painel: ttk.Frame) -> None:
         quadro = ttk.LabelFrame(painel, text="Navegação", padding=4)
-        quadro.pack(fill=tk.X)
+        quadro.pack(side=tk.BOTTOM, fill=tk.X)
 
-        setas = ttk.Frame(quadro)
-        setas.pack()
+        # setas a esquerda e zoom/giro a direita, lado a lado, p o quadro n ficar alto demais
+        controles = ttk.Frame(quadro)
+        controles.pack()
+
+        setas = ttk.Frame(controles)
+        setas.pack(side=tk.LEFT)
 
         botao_cima = ttk.Button(setas, text="↑", width=3, command=self._mover_para_cima)
         botao_esquerda = ttk.Button(setas, text="←", width=3, command=self._mover_para_esquerda)
@@ -162,14 +170,23 @@ class Aplicacao:
         botao_direita.grid(row=1, column=2)
         botao_baixo.grid(row=2, column=1)
 
-        zoom = ttk.Frame(quadro)
-        zoom.pack(pady=(4, 0))
+        ajustes = ttk.Frame(controles)
+        ajustes.pack(side=tk.LEFT, padx=(8, 0))
 
-        botao_zoom_in = ttk.Button(zoom, text="Zoom +", command=self._aproximar)
-        botao_zoom_out = ttk.Button(zoom, text="Zoom −", command=self._afastar)
+        botao_zoom_in = ttk.Button(ajustes, text="Zoom +", command=self._aproximar)
+        botao_zoom_out = ttk.Button(ajustes, text="Zoom −", command=self._afastar)
 
-        botao_zoom_in.pack(side=tk.LEFT)
-        botao_zoom_out.pack(side=tk.LEFT)
+        botao_zoom_in.pack(fill=tk.X)
+        botao_zoom_out.pack(fill=tk.X)
+
+        giro = ttk.Frame(ajustes)
+        giro.pack(fill=tk.X)
+
+        botao_anti_horario = ttk.Button(giro, text="⟲", width=3, command=self._girar_anti_horario)
+        botao_horario = ttk.Button(giro, text="⟳", width=3, command=self._girar_horario)
+
+        botao_anti_horario.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        botao_horario.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         # rotacao é sempre em torno do centro da window, ent so precisa do angulo
         rotacao = ttk.Frame(quadro)
@@ -184,15 +201,6 @@ class Aplicacao:
 
         botao_rotacionar = ttk.Button(rotacao, text="Girar", command=self._rotacionar_window_pelo_campo)
         botao_rotacionar.pack(side=tk.LEFT, padx=(4, 0))
-
-        giro = ttk.Frame(quadro)
-        giro.pack(pady=(4, 0))
-
-        botao_anti_horario = ttk.Button(giro, text="⟲", width=3, command=self._girar_anti_horario)
-        botao_horario = ttk.Button(giro, text="⟳", width=3, command=self._girar_horario)
-
-        botao_anti_horario.pack(side=tk.LEFT)
-        botao_horario.pack(side=tk.LEFT)
 
         self.rotulo_window = ttk.Label(quadro, justify=tk.LEFT)
         self.rotulo_window.pack(anchor=tk.W, pady=(4, 0))
