@@ -1,5 +1,15 @@
 from typing import List, Tuple
 
+from sgi.clipping import (
+    PRIMITIVA_POLIGONO,
+    PRIMITIVA_PONTO,
+    PRIMITIVA_SEGMENTO,
+    AlgoritmoReta,
+    Primitiva,
+    clipar_ponto,
+    sutherland_hodgman,
+)
+
 
 Coordenada = Tuple[float, float]
 CorRGB = Tuple[int, int, int]
@@ -48,6 +58,20 @@ class ObjetoGrafico:
     def _segmentos_de(self, coordenadas: List[Coordenada]) -> List[Tuple[Coordenada, Coordenada]]:
         return []
 
+    def clipar(self, algoritmo_reta: AlgoritmoReta) -> List[Primitiva]:
+        primitivas = []
+
+        for inicio, fim in self.segmentos_normalizados():
+            recortado = algoritmo_reta(inicio, fim)
+
+            if recortado is None:
+                continue
+
+            novo_inicio, novo_fim = recortado
+            primitivas.append((PRIMITIVA_SEGMENTO, [novo_inicio, novo_fim]))
+
+        return primitivas
+
     def descricao(self) -> str:
         return f"{self.nome} ({self.tipo})"
 
@@ -59,6 +83,14 @@ class Ponto(ObjetoGrafico):
         if len(coordenadas) != 1:
             raise ValueError("Um ponto precisa de exatamente 1 coordenada.")
         super().__init__(nome, coordenadas, cor)
+
+    def clipar(self, algoritmo_reta: AlgoritmoReta) -> List[Primitiva]:
+        ponto = self.coordenadas_normalizadas[0]
+
+        if not clipar_ponto(ponto):
+            return []
+
+        return [(PRIMITIVA_PONTO, [ponto])]
 
 
 class Reta(ObjetoGrafico):
@@ -76,15 +108,36 @@ class Reta(ObjetoGrafico):
 
 
 class Wireframe(ObjetoGrafico):
-    #lista de ponto interconectados fechado no ultimo ponto
-
     tipo = "wireframe"
 
-    def __init__(self, nome: str, coordenadas: List[Coordenada], cor: CorRGB = COR_PADRAO):
+    def __init__(
+        self,
+        nome: str,
+        coordenadas: List[Coordenada],
+        cor: CorRGB = COR_PADRAO,
+        preenchido: bool = False,
+    ):
         if len(coordenadas) < 3:
             raise ValueError("Um wireframe precisa de pelo menos 3 coordenadas.")
 
         super().__init__(nome, coordenadas, cor)
+        self.preenchido = preenchido
+    def clipar(self, algoritmo_reta: AlgoritmoReta) -> List[Primitiva]:
+        if not self.preenchido:
+            return super().clipar(algoritmo_reta)
+
+        recortado = sutherland_hodgman(self.coordenadas_normalizadas)
+
+        if len(recortado) < 3:
+            return []
+
+        return [(PRIMITIVA_POLIGONO, recortado)]
+
+    def descricao(self) -> str:
+        if self.preenchido:
+            return f"{self.nome} ({self.tipo} preenchido)"
+
+        return super().descricao()
 
     def _segmentos_de(self, coordenadas: List[Coordenada]) -> List[Tuple[Coordenada, Coordenada]]:
         segmentos = []
@@ -110,11 +163,15 @@ def criar_objeto(
     nome: str,
     coordenadas: List[Coordenada],
     cor: CorRGB = COR_PADRAO,
+    preenchido: bool = False,
 ) -> ObjetoGrafico:
     if tipo not in TIPOS:
         raise ValueError(f"Tipo de objeto desconhecido: {tipo}")
 
     classe = TIPOS[tipo]
+
+    if classe is Wireframe:
+        return Wireframe(nome, coordenadas, cor, preenchido)
 
     return classe(nome, coordenadas, cor)
 

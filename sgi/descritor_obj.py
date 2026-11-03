@@ -14,7 +14,7 @@ from sgi.objetos import (
 
 
 #transcreve um obj grafico p o formato .obj: nome (o), cor (usemtl), vertices (v) e
-#arestas (p p/ ponto, l p/ reta e wireframe). Os indices de vertice do .obj sao
+#arestas (p p/ ponto, l p/ reta e wireframe de arame, f p/ wireframe preenchido). Os indices de vertice do .obj sao
 #globais e comecam em 1, ent o descritor precisa saber quantos vertices ja foram escritos
 class DescritorOBJ:
 
@@ -32,6 +32,9 @@ class DescritorOBJ:
             linhas.append("p " + " ".join(indices))
         elif objeto.tipo == Reta.tipo:
             linhas.append("l " + " ".join(indices))
+        elif objeto.preenchido:
+            # face do .obj ja é fechada por definicao
+            linhas.append("f " + " ".join(indices))
         else:
             # wireframe é fechado, ent a polilinha volta pro primeiro vertice
             indices.append(indices[0])
@@ -87,8 +90,8 @@ def _escrever_materiais(cores: List[CorRGB], caminho_mtl: str) -> None:
 
 
 #le um .obj e devolve os objs graficos. So x e y dos vertices sao usados (mundo 2D).
-#p vira ponto, l c 2 vertices vira reta, l fechado ou f vira wireframe e
-#l aberto c + de 2 vertices vira uma reta por segmento
+#p vira ponto, l c 2 vertices vira reta, l fechado vira wireframe de arame,
+#f vira wireframe preenchido e l aberto c + de 2 vertices vira uma reta por segmento
 def ler_mundo(caminho: str) -> List[ObjetoGrafico]:
     leitor = _LeitorOBJ(os.path.dirname(caminho))
 
@@ -144,7 +147,7 @@ class _LeitorOBJ:
             self._interpretar_polilinha(argumentos)
         elif comando == "f":
             coordenadas = self._vertices(argumentos)
-            self._adicionar(Wireframe, coordenadas)
+            self._adicionar(Wireframe, coordenadas, preenchido=True)
 
         # o resto (vt, vn, s, w...) n tem uso num mundo 2D de pontos e linhas
 
@@ -164,7 +167,7 @@ class _LeitorOBJ:
             segmento = [coordenadas[indice], coordenadas[indice + 1]]
             self._adicionar(Reta, segmento)
 
-    def _adicionar(self, classe, coordenadas: List[Coordenada]) -> None:
+    def _adicionar(self, classe, coordenadas: List[Coordenada], preenchido: bool = False) -> None:
         self.elementos_no_atual += 1
 
         if self.elementos_no_atual == 1:
@@ -172,7 +175,12 @@ class _LeitorOBJ:
         else:
             nome = f"{self.nome_atual}_{self.elementos_no_atual}"
 
-        self.objetos.append(classe(nome, coordenadas, self.cor_atual))
+        if classe is Wireframe:
+            objeto = Wireframe(nome, coordenadas, self.cor_atual, preenchido)
+        else:
+            objeto = classe(nome, coordenadas, self.cor_atual)
+
+        self.objetos.append(objeto)
 
     def _vertices(self, argumentos: List[str]) -> List[Coordenada]:
         coordenadas = []

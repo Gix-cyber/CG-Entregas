@@ -8,9 +8,16 @@ from sgi.dialogo_transformacao import (
     ABA_TRANSLACAO,
     DialogoTransformacao,
 )
+from sgi.clipping import (
+    ALGORITMO_RETA_PADRAO,
+    ALGORITMOS_RETA,
+    PRIMITIVA_POLIGONO,
+    PRIMITIVA_PONTO,
+    PRIMITIVA_SEGMENTO,
+)
 from sgi.descritor_obj import escrever_mundo, ler_mundo
 from sgi.display_file import DisplayFile
-from sgi.objetos import COR_PADRAO, TIPOS, criar_objeto, interpretar_coordenadas
+from sgi.objetos import COR_PADRAO, TIPOS, Wireframe, criar_objeto, interpretar_coordenadas
 from sgi.transformacoes import transformar_ponto
 from sgi.viewport import Viewport
 from sgi.window import Window
@@ -24,6 +31,11 @@ FATOR_ZOOM = 1.1
 
 # passo em graus do Shift + NumPad 4/6, igual ao blender
 PASSO_ROTACAO = 15
+
+# a viewport é menor q o canvas, c uma moldura em volta. Assim se o clipping deixar
+# passar alguma coisa ela aparece fora da moldura, em vez de ser cortada pelo proprio canvas
+MARGEM_VIEWPORT = 10
+COR_MOLDURA = "#ff00ff"
 
 COR_FUNDO = "white"
 COR_EIXOS = "#cccccc"
@@ -45,8 +57,22 @@ class Aplicacao:
         self.raiz.title("SGI - Sistema Gráfico Interativo")
 
         self.display_file = DisplayFile()
-        self.window = Window(-400, -300, 400, 300)
-        self.viewport = Viewport(0, 0, LARGURA_CANVAS, ALTURA_CANVAS)
+        # window c a msm proporcao da viewport, p n distorcer
+        largura_viewport = LARGURA_CANVAS - 2 * MARGEM_VIEWPORT
+        altura_viewport = ALTURA_CANVAS - 2 * MARGEM_VIEWPORT
+
+        self.window = Window(
+            -largura_viewport / 2,
+            -altura_viewport / 2,
+            largura_viewport / 2,
+            altura_viewport / 2,
+        )
+        self.viewport = Viewport(
+            MARGEM_VIEWPORT,
+            MARGEM_VIEWPORT,
+            MARGEM_VIEWPORT + largura_viewport,
+            MARGEM_VIEWPORT + altura_viewport,
+        )
 
         self._ultimo_arraste = None
         self.cor_selecionada = COR_PADRAO
@@ -72,13 +98,15 @@ class Aplicacao:
         painel = ttk.Frame(self.raiz, padding=8)
         painel.pack(side=tk.LEFT, fill=tk.Y)
 
-        # o pack corta primeiro o ultimo widget empacotado qnd falta espaco, ent os quadros
-        # de baixo sao empacotados antes (side=BOTTOM) e a lista de objs por ultimo:
-        # assim é a lista q encolhe em telas baixas e a navegacao fica sempre visivel
-        self._criar_controles_de_navegacao(painel)
-        self._criar_formulario_de_objeto(painel)
-        self._criar_botoes_de_transformacao(painel)
-        self._criar_lista_de_objetos(painel)
+        coluna_edicao = ttk.Frame(painel)
+        coluna_edicao.pack(side=tk.LEFT, fill=tk.Y)
+        coluna_cena = ttk.Frame(painel)
+        coluna_cena.pack(side=tk.LEFT, fill=tk.Y, padx=(8, 0))
+        self._criar_formulario_de_objeto(coluna_edicao)
+        self._criar_selecao_de_clipping(coluna_edicao)
+        self._criar_botoes_de_transformacao(coluna_edicao)
+        self._criar_controles_de_navegacao(coluna_cena)
+        self._criar_lista_de_objetos(coluna_cena)
 
     def _criar_lista_de_objetos(self, painel: ttk.Frame) -> None:
         quadro = ttk.LabelFrame(painel, text="Objetos", padding=4)
@@ -94,7 +122,7 @@ class Aplicacao:
 
     def _criar_botoes_de_transformacao(self, painel: ttk.Frame) -> None:
         quadro = ttk.LabelFrame(painel, text="Transformar selecionado", padding=4)
-        quadro.pack(side=tk.BOTTOM, fill=tk.X, pady=(8, 0))
+        quadro.pack(side=tk.TOP, fill=tk.X, pady=(8, 0))
 
         botao_transladar = ttk.Button(quadro, text="Transladar (G)", command=self._abrir_translacao)
         botao_escalonar = ttk.Button(quadro, text="Escalonar (S)", command=self._abrir_escalonamento)
@@ -104,9 +132,27 @@ class Aplicacao:
         botao_escalonar.pack(fill=tk.X)
         botao_rotacionar.pack(fill=tk.X)
 
+    #o algoritmo de clipping de reta pode ser trocado a qlqr momento, e vale p retas,
+    #arestas de wireframe e eixos. Pontos e poligonos preenchidos tem algoritmo proprio
+    def _criar_selecao_de_clipping(self, painel: ttk.Frame) -> None:
+        quadro = ttk.LabelFrame(painel, text="Clipping de retas", padding=4)
+        quadro.pack(side=tk.TOP, fill=tk.X, pady=(8, 0))
+
+        self.algoritmo_reta_selecionado = tk.StringVar(value=ALGORITMO_RETA_PADRAO)
+
+        for nome in ALGORITMOS_RETA:
+            opcao = ttk.Radiobutton(
+                quadro,
+                text=nome,
+                value=nome,
+                variable=self.algoritmo_reta_selecionado,
+                command=self.desenhar,
+            )
+            opcao.pack(anchor=tk.W)
+
     def _criar_formulario_de_objeto(self, painel: ttk.Frame) -> None:
         quadro = ttk.LabelFrame(painel, text="Adicionar objeto (Shift+A)", padding=4)
-        quadro.pack(side=tk.BOTTOM, fill=tk.X, pady=8)
+        quadro.pack(side=tk.TOP, fill=tk.X)
 
         ttk.Label(quadro, text="Nome:").pack(anchor=tk.W)
         self.entrada_nome = ttk.Entry(quadro)
@@ -121,8 +167,18 @@ class Aplicacao:
                 text=tipo.capitalize(),
                 value=tipo,
                 variable=self.tipo_selecionado,
+                command=self._atualizar_opcao_de_preenchimento,
             )
             opcao.pack(anchor=tk.W)
+
+        # so faz sentido p wireframe, ent fica desabilitado nos outros tipos
+        self.preenchido_selecionado = tk.BooleanVar(value=False)
+        self.opcao_preenchido = ttk.Checkbutton(
+            quadro,
+            text="Preenchido",
+            variable=self.preenchido_selecionado,
+        )
+        self.opcao_preenchido.pack(anchor=tk.W, padx=(16, 0))
 
         ttk.Label(quadro, text="Coordenadas (x1, y1),(x2, y2),...").pack(anchor=tk.W, pady=(4, 0))
         self.entrada_coordenadas = ttk.Entry(quadro)
@@ -149,9 +205,15 @@ class Aplicacao:
         botao_adicionar = ttk.Button(quadro, text="Adicionar", command=self._adicionar_objeto)
         botao_adicionar.pack(fill=tk.X, pady=(4, 0))
 
+    def _atualizar_opcao_de_preenchimento(self) -> None:
+        if self.tipo_selecionado.get() == Wireframe.tipo:
+            self.opcao_preenchido.state(["!disabled"])
+        else:
+            self.opcao_preenchido.state(["disabled"])
+
     def _criar_controles_de_navegacao(self, painel: ttk.Frame) -> None:
         quadro = ttk.LabelFrame(painel, text="Navegação", padding=4)
-        quadro.pack(side=tk.BOTTOM, fill=tk.X)
+        quadro.pack(side=tk.BOTTOM, fill=tk.X, pady=(8, 0))
 
         # setas a esquerda e zoom/giro a direita, lado a lado, p o quadro n ficar alto demais
         controles = ttk.Frame(quadro)
@@ -264,16 +326,19 @@ class Aplicacao:
         self.canvas.bind("<Shift-KP_Right>", self._girar_horario)
 
     def _adicionar_objetos_de_exemplo(self) -> None:
+        # o losango e a reta longa ja comecam passando da borda, p mostrar o clipping
         exemplos = [
-            ("wireframe", "quadrado", "(-100, -100),(100, -100),(100, 100),(-100, 100)", (0, 0, 255)),
-            ("wireframe", "triangulo", "(150, 50),(300, 50),(225, 180)", (0, 160, 0)),
-            ("reta", "diagonal", "(-300, -250),(-150, 200)", (200, 0, 0)),
-            ("ponto", "origem", "(0, 0)", (0, 0, 0)),
+            ("wireframe", "quadrado", "(-100, -100),(100, -100),(100, 100),(-100, 100)", (0, 0, 255), False),
+            ("wireframe", "triangulo", "(150, 50),(300, 50),(225, 180)", (0, 160, 0), True),
+            ("wireframe", "losango", "(300, -150),(480, -50),(300, 50),(120, -50)", (255, 160, 0), True),
+            ("reta", "diagonal", "(-300, -250),(-150, 200)", (200, 0, 0), False),
+            ("reta", "atravessa", "(-600, 150),(600, 250)", (128, 0, 128), False),
+            ("ponto", "origem", "(0, 0)", (0, 0, 0), False),
         ]
 
-        for tipo, nome, texto, cor in exemplos:
+        for tipo, nome, texto, cor, preenchido in exemplos:
             coordenadas = interpretar_coordenadas(texto)
-            objeto = criar_objeto(tipo, nome, coordenadas, cor)
+            objeto = criar_objeto(tipo, nome, coordenadas, cor, preenchido)
             self.display_file.adicionar(objeto)
 
         self._atualizar_lista_de_objetos()
@@ -285,6 +350,7 @@ class Aplicacao:
         self.display_file.normalizar(self.window.matriz_normalizacao())
 
         self._desenhar_eixos()
+        self._desenhar_moldura()
 
         nome_selecionado = self._nome_selecionado()
 
@@ -308,25 +374,47 @@ class Aplicacao:
         eixo_y = ((0, centro_y - alcance), (0, centro_y + alcance))
 
         matriz = self.window.matriz_normalizacao()
+        algoritmo_reta = self._algoritmo_reta()
 
         for inicio, fim in (eixo_x, eixo_y):
             inicio_normalizado = transformar_ponto(inicio, matriz)
             fim_normalizado = transformar_ponto(fim, matriz)
 
-            self._desenhar_segmento(inicio_normalizado, fim_normalizado, COR_EIXOS)
+            # os eixos tb passam pelo clipping, senao vazariam da moldura
+            recortado = algoritmo_reta(inicio_normalizado, fim_normalizado)
 
-    #desenha a partir da cache em SCN, as coordenadas em WC n sao tocadas
+            if recortado is None:
+                continue
+
+            self._desenhar_segmento(recortado[0], recortado[1], COR_EIXOS)
+
+    #a moldura é o contorno da viewport (n da window), desenhado direto em pixels
+    def _desenhar_moldura(self) -> None:
+        self.canvas.create_rectangle(
+            self.viewport.xmin,
+            self.viewport.ymin,
+            self.viewport.xmax,
+            self.viewport.ymax,
+            outline=COR_MOLDURA,
+        )
+
+    def _algoritmo_reta(self):
+        nome = self.algoritmo_reta_selecionado.get()
+
+        return ALGORITMOS_RETA[nome]
+
+    #pipeline: WC -> SCN (cache do display file) -> clipping -> viewport.
+    #so as primitivas q sobram do clipping passam pela transformada de viewport
     def _desenhar_objeto(self, objeto, cor: str, espessura_extra: int) -> None:
-        segmentos = objeto.segmentos_normalizados()
+        primitivas = objeto.clipar(self._algoritmo_reta())
 
-        if len(segmentos) == 0:
-            for coordenada in objeto.coordenadas_normalizadas:
-                self._desenhar_ponto(coordenada, cor, espessura_extra)
-
-            return
-
-        for inicio, fim in segmentos:
-            self._desenhar_segmento(inicio, fim, cor, ESPESSURA_LINHA + espessura_extra)
+        for tipo, coordenadas in primitivas:
+            if tipo == PRIMITIVA_PONTO:
+                self._desenhar_ponto(coordenadas[0], cor, espessura_extra)
+            elif tipo == PRIMITIVA_SEGMENTO:
+                self._desenhar_segmento(coordenadas[0], coordenadas[1], cor, ESPESSURA_LINHA + espessura_extra)
+            elif tipo == PRIMITIVA_POLIGONO:
+                self._desenhar_poligono(coordenadas, cor, espessura_extra)
 
     def _desenhar_ponto(self, coordenada, cor: str, espessura_extra: int = 0) -> None:
         x, y = self.viewport.transformar(coordenada[0], coordenada[1])
@@ -348,6 +436,22 @@ class Aplicacao:
         x2, y2 = self.viewport.transformar(fim[0], fim[1])
 
         self.canvas.create_line(x1, y1, x2, y2, fill=cor, width=espessura)
+
+    #primitiva de preenchimento do tkinter. O contorno fica na msm cor e engrossa qnd selecionado
+    def _desenhar_poligono(self, coordenadas, cor: str, espessura_extra: int = 0) -> None:
+        pontos_viewport = []
+
+        for x_normalizado, y_normalizado in coordenadas:
+            x, y = self.viewport.transformar(x_normalizado, y_normalizado)
+            pontos_viewport.append(x)
+            pontos_viewport.append(y)
+
+        self.canvas.create_polygon(
+            pontos_viewport,
+            fill=cor,
+            outline=cor,
+            width=ESPESSURA_LINHA + espessura_extra,
+        )
 
     def _atualizar_rotulo_window(self) -> None:
         centro_x, centro_y = self.window.centro
@@ -371,7 +475,8 @@ class Aplicacao:
 
         try:
             coordenadas = interpretar_coordenadas(texto)
-            objeto = criar_objeto(tipo, nome, coordenadas, self.cor_selecionada)
+            preenchido = self.preenchido_selecionado.get()
+            objeto = criar_objeto(tipo, nome, coordenadas, self.cor_selecionada, preenchido)
             self.display_file.adicionar(objeto)
         except Exception as erro:
             messagebox.showerror("Erro", f"Não foi possível adicionar o objeto:\n{erro}")
@@ -440,6 +545,10 @@ class Aplicacao:
         DialogoTransformacao(self.raiz, objeto, self.desenhar, aba, self.window.angulo)
 
     def _abrir_menu_de_contexto(self, evento) -> None:
+        # fora da viewport tudo foi clipado, ent n tem obj visivel p selecionar
+        if not self._dentro_da_viewport(evento.x, evento.y):
+            return
+
         objeto = self._objeto_sob_o_mouse(evento.x, evento.y)
 
         if objeto is None:
@@ -449,6 +558,12 @@ class Aplicacao:
         self.desenhar()
 
         self.menu_contexto.tk_popup(evento.x_root, evento.y_root)
+
+    def _dentro_da_viewport(self, x: float, y: float) -> bool:
+        dentro_em_x = self.viewport.xmin <= x <= self.viewport.xmax
+        dentro_em_y = self.viewport.ymin <= y <= self.viewport.ymax
+
+        return dentro_em_x and dentro_em_y
 
     #em 2D basta achar o obj c a menor distancia (em pixels) ate o mouse
     def _objeto_sob_o_mouse(self, x: float, y: float):
@@ -593,10 +708,16 @@ class Aplicacao:
         # manter msm escala ao fazer redimensionamento, pq window e viewport continuam na msm proporcao
         unidades_por_pixel = self.window.largura / self.viewport.largura
 
-        self.viewport.redimensionar(evento.width, evento.height)
+        largura_viewport = evento.width - 2 * MARGEM_VIEWPORT
+        altura_viewport = evento.height - 2 * MARGEM_VIEWPORT
+
+        if largura_viewport <= 1 or altura_viewport <= 1:
+            return
+
+        self.viewport.redimensionar(largura_viewport, altura_viewport)
         self.window.definir_tamanho(
-            evento.width * unidades_por_pixel,
-            evento.height * unidades_por_pixel,
+            largura_viewport * unidades_por_pixel,
+            altura_viewport * unidades_por_pixel,
         )
 
         self.desenhar()
