@@ -6,6 +6,7 @@ from sgi.objetos import (
     COR_PADRAO,
     Coordenada,
     CorRGB,
+    Curva2D,
     ObjetoGrafico,
     Ponto,
     Reta,
@@ -32,6 +33,11 @@ class DescritorOBJ:
             linhas.append("p " + " ".join(indices))
         elif objeto.tipo == Reta.tipo:
             linhas.append("l " + " ".join(indices))
+        elif objeto.tipo == Curva2D.tipo:
+            linhas.append("cstype bezier")
+            linhas.append("deg 3")
+            linhas.append("curv 0.0 1.0 " + " ".join(indices))
+            linhas.append("end")
         elif objeto.preenchido:
             # face do .obj ja é fechada por definicao
             linhas.append("f " + " ".join(indices))
@@ -91,7 +97,7 @@ def _escrever_materiais(cores: List[CorRGB], caminho_mtl: str) -> None:
 
 #le um .obj e devolve os objs graficos. So x e y dos vertices sao usados (mundo 2D).
 #p vira ponto, l c 2 vertices vira reta, l fechado vira wireframe de arame,
-#f vira wireframe preenchido e l aberto c + de 2 vertices vira uma reta por segmento
+#f vira wireframe preenchido, curv vira curva de bezier e l aberto c + de 2 vertices vira uma reta por segmento
 def ler_mundo(caminho: str) -> List[ObjetoGrafico]:
     leitor = _LeitorOBJ(os.path.dirname(caminho))
 
@@ -148,8 +154,13 @@ class _LeitorOBJ:
         elif comando == "f":
             coordenadas = self._vertices(argumentos)
             self._adicionar(Wireframe, coordenadas, preenchido=True)
+        elif comando == "curv":
+            # os 2 primeiros argumentos sao o intervalo do parametro, o resto sao os vertices.
+            # So bezier cubica é suportada, ent cstype e deg sao ignorados
+            coordenadas = self._vertices(argumentos[2:])
+            self._adicionar(Curva2D, coordenadas)
 
-        # o resto (vt, vn, s, w...) n tem uso num mundo 2D de pontos e linhas
+        # o resto (vt, vn, s, w, cstype, deg, end...) n tem uso num mundo 2D de pontos e linhas
 
     def _interpretar_polilinha(self, argumentos: List[str]) -> None:
         coordenadas = self._vertices(argumentos)

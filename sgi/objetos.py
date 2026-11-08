@@ -151,10 +151,107 @@ class Wireframe(ObjetoGrafico):
         return segmentos
 
 
+# matriz de Bezier p/ a forma matricial C(t) = T * Mb * G, c T = [t^3 t^2 t 1]
+# e G = [P1 P2 P3 P4] (os 4 pontos de controle de um trecho)
+MATRIZ_BEZIER = [
+    [-1, 3, -3, 1],
+    [3, -6, 3, 0],
+    [-3, 3, 0, 0],
+    [1, 0, 0, 0],
+]
+
+PASSOS_POR_TRECHO = 40
+
+
+#a curva é composta de trechos de Bezier cubica. O ultimo ponto de controle de um trecho
+#é o primeiro do proximo, o q garante continuidade G(0). Ent sao 4 pontos p/ o 1o trecho
+#e + 3 p/ cada trecho a mais: 4, 7, 10, ...
+class Curva2D(ObjetoGrafico):
+    tipo = "curva"
+
+    def __init__(self, nome: str, coordenadas: List[Coordenada], cor: CorRGB = COR_PADRAO):
+        quantidade = len(coordenadas)
+
+        if quantidade < 4 or (quantidade - 1) % 3 != 0:
+            raise ValueError(
+                "Uma curva de Bézier precisa de 4, 7, 10, ... pontos de controle "
+                "(4 no primeiro trecho e +3 por trecho seguinte)."
+            )
+
+        super().__init__(nome, coordenadas, cor)
+
+    def quantidade_de_trechos(self) -> int:
+        return (len(self.coordenadas) - 1) // 3
+
+    def descricao(self) -> str:
+        trechos = self.quantidade_de_trechos()
+
+        if trechos == 1:
+            return f"{self.nome} ({self.tipo}, 1 trecho)"
+
+        return f"{self.nome} ({self.tipo}, {trechos} trechos)"
+
+    def _segmentos_de(self, coordenadas: List[Coordenada]) -> List[Tuple[Coordenada, Coordenada]]:
+        pontos = pontos_da_curva(coordenadas, PASSOS_POR_TRECHO)
+        segmentos = []
+
+        for indice in range(len(pontos) - 1):
+            segmentos.append((pontos[indice], pontos[indice + 1]))
+
+        return segmentos
+
+
+def pontos_da_curva(controle: List[Coordenada], passos: int) -> List[Coordenada]:
+    pontos = [controle[0]]
+    quantidade_de_trechos = (len(controle) - 1) // 3
+
+    for trecho in range(quantidade_de_trechos):
+        inicio = trecho * 3
+        geometria = controle[inicio:inicio + 4]
+        coeficientes = _coeficientes_bezier(geometria)
+
+        for passo in range(1, passos + 1):
+            t = passo / passos
+            pontos.append(_avaliar_cubica(coeficientes, t))
+
+    return pontos
+
+#x(t) = a t^3 + b t^2 + c t + d (e o msm p/ y)
+def _coeficientes_bezier(geometria: List[Coordenada]) -> List[Coordenada]:
+    coeficientes = []
+
+    for linha in MATRIZ_BEZIER:
+        x = 0.0
+        y = 0.0
+
+        for peso, (px, py) in zip(linha, geometria):
+            x += peso * px
+            y += peso * py
+
+        coeficientes.append((x, y))
+
+    return coeficientes
+
+
+#T * (Mb * G) c T = [t^3 t^2 t 1]
+def _avaliar_cubica(coeficientes: List[Coordenada], t: float) -> Coordenada:
+    vetor_t = [t ** 3, t ** 2, t, 1.0]
+
+    x = 0.0
+    y = 0.0
+
+    for potencia, (cx, cy) in zip(vetor_t, coeficientes):
+        x += potencia * cx
+        y += potencia * cy
+
+    return x, y
+
+
 TIPOS = {
     Ponto.tipo: Ponto,
     Reta.tipo: Reta,
     Wireframe.tipo: Wireframe,
+    Curva2D.tipo: Curva2D,
 }
 
 

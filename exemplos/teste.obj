@@ -1,5 +1,5 @@
 # Mundo de teste do SGI
-# cobre: p (ponto), l c 2 vertices (reta), l fechado (wireframe), f (wireframe preenchido),
+# cobre: p (ponto), l c 2 vertices (reta), l fechado (wireframe), f (wireframe preenchido), curv (curva de bezier),
 # l aberto c + de 2 vertices (uma reta por segmento),
 # indices no formato v/vt/vn, indices negativos e material inexistente
 mtllib teste.mtl
@@ -58,3 +58,17 @@ p 25 26 27
 o centro
 v 0 0 0
 p 28
+
+o curva_s
+usemtl azul
+v -350 -280 0
+v -300 -150 0
+v -150 -150 0
+v -100 -280 0
+v -50 -410 0
+v 50 -410 0
+v 100 -280 0
+cstype bezier
+deg 3
+curv 0.0 1.0 29 30 31 32 33 34 35
+end

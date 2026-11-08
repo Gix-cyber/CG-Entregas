@@ -181,6 +181,7 @@ class Aplicacao:
         self.opcao_preenchido.pack(anchor=tk.W, padx=(16, 0))
 
         ttk.Label(quadro, text="Coordenadas (x1, y1),(x2, y2),...").pack(anchor=tk.W, pady=(4, 0))
+        ttk.Label(quadro, text="Curva: 4, 7, 10, ... pontos de controle", foreground="gray").pack(anchor=tk.W)
         self.entrada_coordenadas = ttk.Entry(quadro)
         self.entrada_coordenadas.pack(fill=tk.X)
         self.entrada_coordenadas.bind("<Return>", self._adicionar_objeto)
@@ -334,6 +335,14 @@ class Aplicacao:
             ("reta", "diagonal", "(-300, -250),(-150, 200)", (200, 0, 0), False),
             ("reta", "atravessa", "(-600, 150),(600, 250)", (128, 0, 128), False),
             ("ponto", "origem", "(0, 0)", (0, 0, 0), False),
+            # 2 trechos de Bezier (7 pontos), o 2o sai pela borda de baixo p mostrar o clipping
+            (
+                "curva",
+                "onda",
+                "(-350, -150),(-300, 0),(-200, 0),(-150, -150),(-100, -300),(0, -450),(50, -150)",
+                (0, 128, 128),
+                False,
+            ),
         ]
 
         for tipo, nome, texto, cor, preenchido in exemplos:
