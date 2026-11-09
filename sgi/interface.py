@@ -182,6 +182,7 @@ class Aplicacao:
 
         ttk.Label(quadro, text="Coordenadas (x1, y1),(x2, y2),...").pack(anchor=tk.W, pady=(4, 0))
         ttk.Label(quadro, text="Curva: 4, 7, 10, ... pontos de controle", foreground="gray").pack(anchor=tk.W)
+        ttk.Label(quadro, text="B-Spline: 4 ou mais pontos de controle", foreground="gray").pack(anchor=tk.W)
         self.entrada_coordenadas = ttk.Entry(quadro)
         self.entrada_coordenadas.pack(fill=tk.X)
         self.entrada_coordenadas.bind("<Return>", self._adicionar_objeto)
@@ -341,6 +342,13 @@ class Aplicacao:
                 "onda",
                 "(-350, -150),(-300, 0),(-200, 0),(-150, -150),(-100, -300),(0, -450),(50, -150)",
                 (0, 128, 128),
+                False,
+            ),
+            (
+                "b-spline",
+                "mola",
+                "(-450, 250),(-350, 50),(-250, 250),(-150, 50),(-50, 250),(50, 50)",
+                (200, 0, 120),
                 False,
             ),
         ]

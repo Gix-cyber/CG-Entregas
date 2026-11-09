@@ -218,19 +218,7 @@ def pontos_da_curva(controle: List[Coordenada], passos: int) -> List[Coordenada]
 
 #x(t) = a t^3 + b t^2 + c t + d (e o msm p/ y)
 def _coeficientes_bezier(geometria: List[Coordenada]) -> List[Coordenada]:
-    coeficientes = []
-
-    for linha in MATRIZ_BEZIER:
-        x = 0.0
-        y = 0.0
-
-        for peso, (px, py) in zip(linha, geometria):
-            x += peso * px
-            y += peso * py
-
-        coeficientes.append((x, y))
-
-    return coeficientes
+    return _coeficientes(MATRIZ_BEZIER, geometria)
 
 
 #T * (Mb * G) c T = [t^3 t^2 t 1]
@@ -247,11 +235,127 @@ def _avaliar_cubica(coeficientes: List[Coordenada], t: float) -> Coordenada:
     return x, y
 
 
+
+MATRIZ_BSPLINE = [
+    [-1 / 6, 3 / 6, -3 / 6, 1 / 6],
+    [3 / 6, -6 / 6, 3 / 6, 0],
+    [-3 / 6, 0, 3 / 6, 0],
+    [1 / 6, 4 / 6, 1 / 6, 0],
+]
+
+class BSpline(ObjetoGrafico):
+    tipo = "b-spline"
+
+    def __init__(self, nome: str, coordenadas: List[Coordenada], cor: CorRGB = COR_PADRAO):
+        if len(coordenadas) < 4:
+            raise ValueError("Uma B-Spline precisa de pelo menos 4 pontos de controle.")
+
+        super().__init__(nome, coordenadas, cor)
+
+    def quantidade_de_trechos(self) -> int:
+        return len(self.coordenadas) - 3
+
+    def descricao(self) -> str:
+        trechos = self.quantidade_de_trechos()
+
+        if trechos == 1:
+            return f"{self.nome} ({self.tipo}, 1 trecho)"
+
+        return f"{self.nome} ({self.tipo}, {trechos} trechos)"
+
+    def _segmentos_de(self, coordenadas: List[Coordenada]) -> List[Tuple[Coordenada, Coordenada]]:
+        pontos = pontos_da_bspline(coordenadas, PASSOS_POR_TRECHO)
+        segmentos = []
+
+        for indice in range(len(pontos) - 1):
+            segmentos.append((pontos[indice], pontos[indice + 1]))
+
+        return segmentos
+
+
+def pontos_da_bspline(controle: List[Coordenada], passos: int) -> List[Coordenada]:
+    pontos = []
+    delta = 1.0 / passos
+    quantidade_de_trechos = len(controle) - 3
+
+    for trecho in range(quantidade_de_trechos):
+        geometria = controle[trecho:trecho + 4]
+        coeficientes = _coeficientes(MATRIZ_BSPLINE, geometria)
+        diferencas = _diferencas_iniciais(coeficientes, delta)
+        pontos_do_trecho = _forward_differences(diferencas, passos)
+
+        # o 1o ponto de um trecho é o ultimo do anterior, ent n repete
+        if trecho > 0:
+            pontos_do_trecho = pontos_do_trecho[1:]
+
+        pontos.extend(pontos_do_trecho)
+
+    return pontos
+
+
+#vetor inicial [f(0) Δf(0) Δ²f(0) Δ³f(0)] = E(δ) * C, c C = [a b c d] os coeficientes
+#de f(t) = a t^3 + b t^2 + c t + d e
+#        |   0     0    0  1 |
+# E(δ) = |  δ^3   δ^2   δ  0 |
+#        | 6δ^3  2δ^2   0  0 |
+#        | 6δ^3    0    0  0 |
+def _diferencas_iniciais(coeficientes: List[Coordenada], delta: float) -> List[Coordenada]:
+    matriz_e = [
+        [0, 0, 0, 1],
+        [delta ** 3, delta ** 2, delta, 0],
+        [6 * delta ** 3, 2 * delta ** 2, 0, 0],
+        [6 * delta ** 3, 0, 0, 0],
+    ]
+
+    return _coeficientes(matriz_e, coeficientes)
+
+
+#a cada passo: f += Δf, Δf += Δ²f, Δ²f += Δ³f (Δ³f é constante numa cubica)
+def _forward_differences(diferencas: List[Coordenada], passos: int) -> List[Coordenada]:
+    x, y = diferencas[0]
+    dx, dy = diferencas[1]
+    d2x, d2y = diferencas[2]
+    d3x, d3y = diferencas[3]
+
+    pontos = [(x, y)]
+
+    for _ in range(passos):
+        x += dx
+        y += dy
+
+        dx += d2x
+        dy += d2y
+
+        d2x += d3x
+        d2y += d3y
+
+        pontos.append((x, y))
+
+    return pontos
+
+
+def _coeficientes(matriz: List[List[float]], geometria: List[Coordenada]) -> List[Coordenada]:
+    coeficientes = []
+
+    for linha in matriz:
+        x = 0.0
+        y = 0.0
+
+        for peso, (px, py) in zip(linha, geometria):
+            x += peso * px
+            y += peso * py
+
+        coeficientes.append((x, y))
+
+    return coeficientes
+
+
 TIPOS = {
     Ponto.tipo: Ponto,
     Reta.tipo: Reta,
     Wireframe.tipo: Wireframe,
     Curva2D.tipo: Curva2D,
+    BSpline.tipo: BSpline,
 }
 
 
