@@ -47,6 +47,14 @@ class ObjetoGrafico:
 
         return soma_x / quantidade, soma_y / quantidade
 
+    def coordenadas_3d(self) -> List[Tuple[float, float, float]]:
+        coordenadas = []
+
+        for x, y in self.coordenadas:
+            coordenadas.append((x, y, 0.0))
+
+        return coordenadas
+
     #segmnetos de reta q compoem o obj, em WC
     def segmentos(self) -> List[Tuple[Coordenada, Coordenada]]:
         return self._segmentos_de(self.coordenadas)

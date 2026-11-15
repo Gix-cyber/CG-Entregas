@@ -1,146 +1,148 @@
 #TODO: rever zoom c objetos adicionados, tem alguma coisa estranha em relacao aos pixels (testar c reta)
 
 import math
-from typing import List, Tuple
 
-from sgi.objetos import Coordenada
-from sgi.transformacoes import (
-    Matriz,
+from sgi.objetos3d import Ponto3D
+from sgi.transformacoes3d import (
+    Coordenada3D,
+    Matriz4,
+    Vetor3D,
     compor,
     matriz_escalonamento,
-    matriz_rotacao,
+    matriz_rotacao_x,
+    matriz_rotacao_y,
+    matriz_rotacao_z,
     matriz_translacao,
-    preparar_escalonamento_em_torno_de,
-    preparar_rotacao_em_torno_de,
-    transformar_ponto,
+    multiplicar_escalar,
+    normalizar,
+    preparar_rotacao_eixo_arbitrario,
+    produto_vetorial,
+    somar,
+    transformar_vetor,
 )
 
+VISTA_TOPO = ((0.0, 0.0, 1.0), (0.0, 1.0, 0.0))
+VISTA_BAIXO = ((0.0, 0.0, -1.0), (0.0, -1.0, 0.0))
+VISTA_FRENTE = ((0.0, -1.0, 0.0), (0.0, 0.0, 1.0))
+VISTA_TRAS = ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+VISTA_DIREITA = ((1.0, 0.0, 0.0), (0.0, 0.0, 1.0))
+VISTA_ESQUERDA = ((-1.0, 0.0, 0.0), (0.0, 0.0, 1.0))
 
-#a window é tratada como um obj grafico qualquer: 4 cantos em WC, na ordem
-#inferior esquerdo, inferior direito, superior direito, superior esquerdo.
-#centro, tamanho e angulo (vup) saem desses cantos, n sao guardados separado
+
 class Window:
 
     def __init__(self, xmin: float, ymin: float, xmax: float, ymax: float):
-        self.cantos: List[Coordenada] = [
-            (xmin, ymin),
-            (xmax, ymin),
-            (xmax, ymax),
-            (xmin, ymax),
-        ]
+        self.vrp = Ponto3D((xmin + xmax) / 2, (ymin + ymax) / 2, 0.0)
+        self.vpn: Vetor3D = VISTA_TOPO[0]
+        self.vup: Vetor3D = VISTA_TOPO[1]
+        self.largura = xmax - xmin
+        self.altura = ymax - ymin
 
     @property
-    def centro(self) -> Coordenada:
-        soma_x = 0.0
-        soma_y = 0.0
-
-        for x, y in self.cantos:
-            soma_x += x
-            soma_y += y
-
-        return soma_x / 4, soma_y / 4
+    def centro(self) -> Coordenada3D:
+        return self.vrp.como_tupla()
 
     @property
-    def largura(self) -> float:
-        return _distancia(self.cantos[0], self.cantos[1])
+    def eixo_u(self) -> Vetor3D:
+        return normalizar(produto_vetorial(self.vup, self.vpn))
 
-    @property
-    def altura(self) -> float:
-        return _distancia(self.cantos[1], self.cantos[2])
-
-    #angulo do eixo x da window c o eixo x do mundo, em graus (anti-horario positivo).
-    #o vup é esse msm angulo aplicado no eixo y
     @property
     def angulo(self) -> float:
-        inicio_x, inicio_y = self.cantos[0]
-        fim_x, fim_y = self.cantos[1]
+        ux, uy, _ = self.eixo_u
 
-        return math.degrees(math.atan2(fim_y - inicio_y, fim_x - inicio_x))
+        if math.hypot(ux, uy) < 1e-9:
+            return 0.0
 
-    def _aplicar(self, matriz: Matriz) -> None:
-        novos_cantos = []
+        return math.degrees(math.atan2(uy, ux))
 
-        for canto in self.cantos:
-            novos_cantos.append(transformar_ponto(canto, matriz))
+    # ---- navegacao ----
 
-        self.cantos = novos_cantos
-
-    #panning em WC
-    def mover(self, deslocamento_x: float, deslocamento_y: float) -> None:
-        self._aplicar(matriz_translacao(deslocamento_x, deslocamento_y))
-
-    #panning nos eixos da propria window, ou seja, respeitando o "p cima" do usuario
     def mover_relativo(self, deslocamento_x: float, deslocamento_y: float) -> None:
-        deslocamento_mundo = transformar_ponto(
-            (deslocamento_x, deslocamento_y),
-            matriz_rotacao(self.angulo),
+        deslocamento = somar(
+            multiplicar_escalar(self.eixo_u, deslocamento_x),
+            multiplicar_escalar(self.vup, deslocamento_y),
         )
 
-        self.mover(deslocamento_mundo[0], deslocamento_mundo[1])
+        self.vrp.transladar(deslocamento[0], deslocamento[1], deslocamento[2])
 
-    #panning em porcentagem do tamanho da window, nos eixos dela
     def mover_proporcional(self, fracao_x: float, fracao_y: float) -> None:
-        deslocamento_x = fracao_x * self.largura
-        deslocamento_y = fracao_y * self.altura
+        self.mover_relativo(fracao_x * self.largura, fracao_y * self.altura)
 
-        self.mover_relativo(deslocamento_x, deslocamento_y)
-
-    #fator do zooming >1 aproxima, <1 tem q afastar. Escala uniforme no centro,
-    #ent n importa se a window ta rotacionada
     def escalar(self, fator: float) -> None:
         if fator <= 0:
             raise ValueError("O fator de zoom deve ser positivo.")
 
-        inverso = 1 / fator
+        self.largura = self.largura / fator
+        self.altura = self.altura / fator
 
-        self._aplicar(preparar_escalonamento_em_torno_de(inverso, inverso, self.centro))
-
-    #rotacao de obj em torno de ponto arbitrario, c o ponto sendo o centro da window
+    #giro da window em torno do proprio VPN (o "rotacionar" do 2D). O VRP fica parado
     def rotacionar(self, angulo_graus: float) -> None:
-        self._aplicar(preparar_rotacao_em_torno_de(angulo_graus, self.centro))
+        self._girar_orientacao(self.vpn, angulo_graus)
 
-    #height e witdh da window alteradas mantendo centro e angulo. Qm chama precisa preserver proporcao do viewport,
-    #pq a transformada precisa usar a msm escala em x e y (se n fizer assim distorce tava tendo problema c isso
+    #orbita em torno do VRP: positivo leva o observador p direita (o VPN vai na direcao do u)
+    def orbitar_horizontal(self, angulo_graus: float) -> None:
+        self._girar_orientacao(self.vup, angulo_graus)
+
+    def orbitar_vertical(self, angulo_graus: float) -> None:
+        self._girar_orientacao(self.eixo_u, -angulo_graus)
+
+    def _girar_orientacao(self, eixo: Vetor3D, angulo_graus: float) -> None:
+        matriz = preparar_rotacao_eixo_arbitrario(angulo_graus, (0.0, 0.0, 0.0), eixo)
+
+        vpn = normalizar(transformar_vetor(self.vpn, matriz))
+        vup = transformar_vetor(self.vup, matriz)
+
+        self._definir_orientacao(vpn, vup)
+
+    def definir_vista(self, vista) -> None:
+        vpn, vup = vista
+
+        self._definir_orientacao(vpn, vup)
+
+    def _definir_orientacao(self, vpn: Vetor3D, vup: Vetor3D) -> None:
+        vpn = normalizar(vpn)
+        paralelo = vup[0] * vpn[0] + vup[1] * vpn[1] + vup[2] * vpn[2]
+        vup = somar(vup, multiplicar_escalar(vpn, -paralelo))
+
+        self.vpn = vpn
+        self.vup = normalizar(vup)
+
     def definir_tamanho(self, largura: float, altura: float) -> None:
-        centro_x, centro_y = self.centro
-        angulo = self.angulo
-        meia_largura = largura / 2
-        meia_altura = altura / 2
+        self.largura = largura
+        self.altura = altura
 
-        # monta alinhada aos eixos e dps gira de volta p onde tava
-        self.cantos = [
-            (centro_x - meia_largura, centro_y - meia_altura),
-            (centro_x + meia_largura, centro_y - meia_altura),
-            (centro_x + meia_largura, centro_y + meia_altura),
-            (centro_x - meia_largura, centro_y + meia_altura),
-        ]
-        self.rotacionar(angulo)
 
-    #algoritmo gerar descricao em SCN:
-    #  1. translada o centro da window p origem
-    #  2. rotaciona o mundo por -angulo (o mundo gira ao contrario da window)
-    #  3. escala p window virar o quadrado [-1, 1] x [-1, 1]
-    def matriz_normalizacao(self) -> Matriz:
-        centro_x, centro_y = self.centro
+    def _angulos_do_vpn(self):
+        a, b, c = self.vpn
+
+        angulo_x = math.degrees(math.atan2(b, c))
+
+        angulo_y = math.degrees(math.atan2(-a, math.hypot(b, c)))
+
+        return angulo_x, angulo_y
+
+    def _matriz_alinhamento_vpn(self) -> Matriz4:
+        angulo_x, angulo_y = self._angulos_do_vpn()
 
         return compor([
-            matriz_translacao(-centro_x, -centro_y),
-            matriz_rotacao(-self.angulo),
-            matriz_escalonamento(2 / self.largura, 2 / self.altura),
+            matriz_rotacao_x(angulo_x),
+            matriz_rotacao_y(angulo_y),
         ])
 
-    #inverso da normalizacao, SCN -> WC
-    def para_mundo(self, x_normalizado: float, y_normalizado: float) -> Tuple[float, float]:
-        centro_x, centro_y = self.centro
+    def vpn_alinhado(self) -> Vetor3D:
+        return transformar_vetor(self.vpn, self._matriz_alinhamento_vpn())
 
-        matriz = compor([
-            matriz_escalonamento(self.largura / 2, self.altura / 2),
-            matriz_rotacao(self.angulo),
-            matriz_translacao(centro_x, centro_y),
+    def matriz_normalizacao(self) -> Matriz4:
+        x, y, z = self.centro
+        alinhamento = self._matriz_alinhamento_vpn()
+
+        # angulo do VUP ja alinhado em relacao a y. Rotacao em z faz x' = x cos - y sen
+        vup_x, vup_y, _ = transformar_vetor(self.vup, alinhamento)
+        angulo_z = math.degrees(math.atan2(vup_x, vup_y))
+
+        return compor([
+            matriz_translacao(-x, -y, -z),
+            alinhamento,
+            matriz_rotacao_z(angulo_z),
+            matriz_escalonamento(2 / self.largura, 2 / self.altura, 1.0),
         ])
-
-        return transformar_ponto((x_normalizado, y_normalizado), matriz)
-
-
-def _distancia(a: Coordenada, b: Coordenada) -> float:
-    return math.hypot(b[0] - a[0], b[1] - a[1])

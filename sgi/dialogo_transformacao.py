@@ -240,11 +240,14 @@ class DialogoTransformacao:
             )
             return
 
-        matriz = matriz_resultante(self.transformacoes, self.objeto)
-        transformar(self.objeto, matriz)
+        self._transformar_objeto()
 
         self.janela.destroy()
         self.ao_aplicar()
+
+    def _transformar_objeto(self) -> None:
+        matriz = matriz_resultante(self.transformacoes, self.objeto)
+        transformar(self.objeto, matriz)
 
     def _cancelar(self, evento=None) -> None:
         self.janela.destroy()

@@ -8,6 +8,7 @@ from sgi.dialogo_transformacao import (
     ABA_TRANSLACAO,
     DialogoTransformacao,
 )
+from sgi.dialogo_transformacao3d import DialogoTransformacao3D
 from sgi.clipping import (
     ALGORITMO_RETA_PADRAO,
     ALGORITMOS_RETA,
@@ -18,9 +19,18 @@ from sgi.clipping import (
 from sgi.descritor_obj import escrever_mundo, ler_mundo
 from sgi.display_file import DisplayFile
 from sgi.objetos import COR_PADRAO, TIPOS, Wireframe, criar_objeto, interpretar_coordenadas
-from sgi.transformacoes import transformar_ponto
+from sgi.objetos3d import MALHAS, Objeto3D, criar_cubo, criar_piramide, interpretar_segmentos
+from sgi.transformacoes3d import comprimento, transformar_ponto
 from sgi.viewport import Viewport
-from sgi.window import Window
+from sgi.window import (
+    VISTA_BAIXO,
+    VISTA_DIREITA,
+    VISTA_ESQUERDA,
+    VISTA_FRENTE,
+    VISTA_TOPO,
+    VISTA_TRAS,
+    Window,
+)
 
 
 LARGURA_CANVAS = 800
@@ -29,8 +39,15 @@ ALTURA_CANVAS = 600
 PASSO_PANNING = 0.1
 FATOR_ZOOM = 1.1
 
-# passo em graus do Shift + NumPad 4/6, igual ao blender
+# passo em graus do Shift + NumPad 4/6 (giro) e do NumPad 2/4/6/8 (orbita), igual ao blender
 PASSO_ROTACAO = 15
+PASSO_ORBITA = 15
+
+GRAUS_POR_PIXEL = 0.5
+
+FRACAO_TAMANHO_MALHA = 0.25
+
+TIPO_OBJETO_3D = Objeto3D.tipo
 
 # a viewport é menor q o canvas, c uma moldura em volta. Assim se o clipping deixar
 # passar alguma coisa ela aparece fora da moldura, em vez de ser cortada pelo proprio canvas
@@ -38,7 +55,8 @@ MARGEM_VIEWPORT = 10
 COR_MOLDURA = "#ff00ff"
 
 COR_FUNDO = "white"
-COR_EIXOS = "#cccccc"
+# eixos do mundo c as cores do blender, so q claras: x vermelho, y verde, z azul
+CORES_EIXOS = ["#f0a0a0", "#a0d8a0", "#a0b8f0"]
 ESPESSURA_LINHA = 1
 ESPESSURA_PONTO = 5
 
@@ -75,6 +93,7 @@ class Aplicacao:
         )
 
         self._ultimo_arraste = None
+        self._modo_arraste = None
         self.cor_selecionada = COR_PADRAO
 
         self._criar_menu()
@@ -92,7 +111,21 @@ class Aplicacao:
         menu_arquivo.add_command(label="Salvar mundo (.obj)...", command=self._salvar_mundo)
 
         barra.add_cascade(label="Arquivo", menu=menu_arquivo)
+        barra.add_cascade(label="Adicionar", menu=self._criar_menu_adicionar(barra))
         self.raiz.configure(menu=barra)
+
+    def _criar_menu_adicionar(self, pai: tk.Misc) -> tk.Menu:
+        menu = tk.Menu(pai, tearoff=False)
+        menu_malha = tk.Menu(menu, tearoff=False)
+
+        for nome in MALHAS:
+            menu_malha.add_command(label=nome, command=lambda nome=nome: self._adicionar_malha(nome))
+
+        menu.add_cascade(label="Malha", menu=menu_malha)
+        menu.add_separator()
+        menu.add_command(label="Pelo formulário...", command=self._focar_formulario)
+
+        return menu
 
     def _criar_painel_lateral(self) -> None:
         painel = ttk.Frame(self.raiz, padding=8)
@@ -171,6 +204,15 @@ class Aplicacao:
             )
             opcao.pack(anchor=tk.W)
 
+        opcao_3d = ttk.Radiobutton(
+            quadro,
+            text="Objeto 3D",
+            value=TIPO_OBJETO_3D,
+            variable=self.tipo_selecionado,
+            command=self._atualizar_opcao_de_preenchimento,
+        )
+        opcao_3d.pack(anchor=tk.W)
+
         # so faz sentido p wireframe, ent fica desabilitado nos outros tipos
         self.preenchido_selecionado = tk.BooleanVar(value=False)
         self.opcao_preenchido = ttk.Checkbutton(
@@ -183,6 +225,7 @@ class Aplicacao:
         ttk.Label(quadro, text="Coordenadas (x1, y1),(x2, y2),...").pack(anchor=tk.W, pady=(4, 0))
         ttk.Label(quadro, text="Curva: 4, 7, 10, ... pontos de controle", foreground="gray").pack(anchor=tk.W)
         ttk.Label(quadro, text="B-Spline: 4 ou mais pontos de controle", foreground="gray").pack(anchor=tk.W)
+        ttk.Label(quadro, text="Objeto 3D: (x, y, z) em pares, 1 par = 1 segmento", foreground="gray").pack(anchor=tk.W)
         self.entrada_coordenadas = ttk.Entry(quadro)
         self.entrada_coordenadas.pack(fill=tk.X)
         self.entrada_coordenadas.bind("<Return>", self._adicionar_objeto)
@@ -266,8 +309,38 @@ class Aplicacao:
         botao_rotacionar = ttk.Button(rotacao, text="Girar", command=self._rotacionar_window_pelo_campo)
         botao_rotacionar.pack(side=tk.LEFT, padx=(4, 0))
 
+        self._criar_controles_de_orbita(quadro)
+
         self.rotulo_window = ttk.Label(quadro, justify=tk.LEFT)
         self.rotulo_window.pack(anchor=tk.W, pady=(4, 0))
+
+    def _criar_controles_de_orbita(self, quadro: ttk.Frame) -> None:
+        linha = ttk.Frame(quadro)
+        linha.pack(pady=(4, 0))
+
+        orbita = ttk.LabelFrame(linha, text="Órbita", padding=2)
+        orbita.pack(side=tk.LEFT)
+
+        botao_cima = ttk.Button(orbita, text="↑", width=3, command=self._orbitar_para_cima)
+        botao_esquerda = ttk.Button(orbita, text="←", width=3, command=self._orbitar_para_esquerda)
+        botao_direita = ttk.Button(orbita, text="→", width=3, command=self._orbitar_para_direita)
+        botao_baixo = ttk.Button(orbita, text="↓", width=3, command=self._orbitar_para_baixo)
+
+        botao_cima.grid(row=0, column=1)
+        botao_esquerda.grid(row=1, column=0)
+        botao_direita.grid(row=1, column=2)
+        botao_baixo.grid(row=2, column=1)
+
+        vistas = ttk.LabelFrame(linha, text="Vistas", padding=2)
+        vistas.pack(side=tk.LEFT, padx=(8, 0), fill=tk.Y)
+
+        botao_topo = ttk.Button(vistas, text="Topo (7)", command=self._vista_topo)
+        botao_frente = ttk.Button(vistas, text="Frente (1)", command=self._vista_frente)
+        botao_lado = ttk.Button(vistas, text="Direita (3)", command=self._vista_direita)
+
+        botao_topo.pack(fill=tk.X)
+        botao_frente.pack(fill=tk.X)
+        botao_lado.pack(fill=tk.X)
 
     def _criar_canvas(self) -> None:
         self.canvas = tk.Canvas(
@@ -286,8 +359,9 @@ class Aplicacao:
         self.canvas.bind("<Button-4>", self._aproximar)
         self.canvas.bind("<Button-5>", self._afastar)
 
-        # panning c shift + drag c botao do meio
-        self.canvas.bind("<Shift-ButtonPress-2>", self._iniciar_arraste)
+        self.canvas.bind("<Shift-ButtonPress-2>", self._iniciar_panning)
+        self.canvas.bind("<ButtonPress-2>", self._iniciar_orbita)
+        self.canvas.bind("<B2-Motion>", self._arrastar)
         self.canvas.bind("<Shift-B2-Motion>", self._arrastar)
         self.canvas.bind("<ButtonRelease-2>", self._finalizar_arraste)
 
@@ -304,7 +378,8 @@ class Aplicacao:
         self.menu_contexto.add_command(label="Remover", command=self._remover_objeto)
 
     def _criar_atalhos(self) -> None:
-        self.raiz.bind("<Shift-A>", self._focar_formulario)
+        self.menu_shift_a = self._criar_menu_adicionar(self.raiz)
+        self.raiz.bind("<Shift-A>", self._abrir_menu_adicionar)
         self.canvas.bind("<Up>", self._mover_para_cima)
         self.canvas.bind("<Down>", self._mover_para_baixo)
         self.canvas.bind("<Left>", self._mover_para_esquerda)
@@ -326,6 +401,26 @@ class Aplicacao:
         self.canvas.bind("<Shift-KP_Left>", self._girar_anti_horario)
         self.canvas.bind("<Shift-KP_6>", self._girar_horario)
         self.canvas.bind("<Shift-KP_Right>", self._girar_horario)
+
+        atalhos_de_orbita = [
+            (("<KP_8>", "<KP_Up>"), self._orbitar_para_cima),
+            (("<KP_2>", "<KP_Down>"), self._orbitar_para_baixo),
+            (("<KP_4>", "<KP_Left>"), self._orbitar_para_esquerda),
+            (("<KP_6>", "<KP_Right>"), self._orbitar_para_direita),
+        ]
+
+        atalhos_de_vista = [
+            (("<KP_7>", "<KP_Home>"), self._vista_topo),
+            (("<Control-KP_7>", "<Control-KP_Home>"), self._vista_baixo),
+            (("<KP_1>", "<KP_End>"), self._vista_frente),
+            (("<Control-KP_1>", "<Control-KP_End>"), self._vista_tras),
+            (("<KP_3>", "<KP_Next>"), self._vista_direita),
+            (("<Control-KP_3>", "<Control-KP_Next>"), self._vista_esquerda),
+        ]
+
+        for teclas, comando in atalhos_de_orbita + atalhos_de_vista:
+            for tecla in teclas:
+                self.canvas.bind(tecla, comando)
 
     def _adicionar_objetos_de_exemplo(self) -> None:
         # o losango e a reta longa ja comecam passando da borda, p mostrar o clipping
@@ -358,6 +453,13 @@ class Aplicacao:
             objeto = criar_objeto(tipo, nome, coordenadas, cor, preenchido)
             self.display_file.adicionar(objeto)
 
+        cubo = criar_cubo("cubo", (250.0, -220.0, 60.0), 120.0, (0, 90, 200))
+        cubo.rotacionar_eixo_arbitrario(30.0, (250.0, -220.0, 60.0), (251.0, -219.0, 61.0))
+        self.display_file.adicionar(cubo)
+
+        piramide = criar_piramide("pirâmide", (-250.0, 180.0, 50.0), 100.0, (180, 90, 0))
+        self.display_file.adicionar(piramide)
+
         self._atualizar_lista_de_objetos()
 
     def desenhar(self) -> None:
@@ -381,29 +483,33 @@ class Aplicacao:
 
         self._atualizar_rotulo_window()
 
-    #c a window rotacionada n da p usar os limites dela p cortar os eixos. Qlqr ponto da window
-    #ta a no max meia diagonal do centro, ent um trecho de uma diagonal p cada lado cobre ela toda
     def _desenhar_eixos(self) -> None:
-        centro_x, centro_y = self.window.centro
-        alcance = math.hypot(self.window.largura, self.window.altura)
+        alcance = comprimento(self.window.centro) + math.hypot(self.window.largura, self.window.altura)
 
-        eixo_x = ((centro_x - alcance, 0), (centro_x + alcance, 0))
-        eixo_y = ((0, centro_y - alcance), (0, centro_y + alcance))
+        eixos = [
+            ((-alcance, 0.0, 0.0), (alcance, 0.0, 0.0)),
+            ((0.0, -alcance, 0.0), (0.0, alcance, 0.0)),
+            ((0.0, 0.0, -alcance), (0.0, 0.0, alcance)),
+        ]
 
         matriz = self.window.matriz_normalizacao()
         algoritmo_reta = self._algoritmo_reta()
 
-        for inicio, fim in (eixo_x, eixo_y):
-            inicio_normalizado = transformar_ponto(inicio, matriz)
-            fim_normalizado = transformar_ponto(fim, matriz)
+        for (inicio, fim), cor in zip(eixos, CORES_EIXOS):
+            # projecao paralela ortogonal: dps da matriz o z é ignorado
+            inicio_x, inicio_y, _ = transformar_ponto(inicio, matriz)
+            fim_x, fim_y, _ = transformar_ponto(fim, matriz)
+
+            if math.hypot(fim_x - inicio_x, fim_y - inicio_y) < 1e-9:
+                continue
 
             # os eixos tb passam pelo clipping, senao vazariam da moldura
-            recortado = algoritmo_reta(inicio_normalizado, fim_normalizado)
+            recortado = algoritmo_reta((inicio_x, inicio_y), (fim_x, fim_y))
 
             if recortado is None:
                 continue
 
-            self._desenhar_segmento(recortado[0], recortado[1], COR_EIXOS)
+            self._desenhar_segmento(recortado[0], recortado[1], cor)
 
     #a moldura é o contorno da viewport (n da window), desenhado direto em pixels
     def _desenhar_moldura(self) -> None:
@@ -471,13 +577,13 @@ class Aplicacao:
         )
 
     def _atualizar_rotulo_window(self) -> None:
-        centro_x, centro_y = self.window.centro
-
         texto = (
             f"Window:\n"
-            f"  centro: ({centro_x:.1f}, {centro_y:.1f})\n"
-            f"  tamanho: {self.window.largura:.1f} x {self.window.altura:.1f}\n"
-            f"  ângulo: {self.window.angulo:.1f}°"
+            f"  VRP: {_formatar_vetor(self.window.centro, 1)}\n"
+            f"  VPN: {_formatar_vetor(self.window.vpn, 2)}\n"
+            f"  VUP: {_formatar_vetor(self.window.vup, 2)}\n"
+            f"  VPN alinhado: {_formatar_vetor(self.window.vpn_alinhado(), 2)}\n"
+            f"  tamanho: {self.window.largura:.1f} x {self.window.altura:.1f}"
         )
         self.rotulo_window.configure(text=texto)
 
@@ -491,9 +597,14 @@ class Aplicacao:
             return
 
         try:
-            coordenadas = interpretar_coordenadas(texto)
-            preenchido = self.preenchido_selecionado.get()
-            objeto = criar_objeto(tipo, nome, coordenadas, self.cor_selecionada, preenchido)
+            if tipo == TIPO_OBJETO_3D:
+                segmentos = interpretar_segmentos(texto)
+                objeto = Objeto3D(nome, segmentos, self.cor_selecionada)
+            else:
+                coordenadas = interpretar_coordenadas(texto)
+                preenchido = self.preenchido_selecionado.get()
+                objeto = criar_objeto(tipo, nome, coordenadas, self.cor_selecionada, preenchido)
+
             self.display_file.adicionar(objeto)
         except Exception as erro:
             messagebox.showerror("Erro", f"Não foi possível adicionar o objeto:\n{erro}")
@@ -504,6 +615,23 @@ class Aplicacao:
 
         self._atualizar_lista_de_objetos()
         self.desenhar()
+
+    def _adicionar_malha(self, nome_malha: str) -> None:
+        lado = FRACAO_TAMANHO_MALHA * min(self.window.largura, self.window.altura)
+        criar = MALHAS[nome_malha]
+        malha = criar(nome_malha.lower(), self.window.centro, lado, self.cor_selecionada)
+
+        self._acrescentar_objetos([malha])
+        self._selecionar_na_lista(malha.nome)
+        self.desenhar()
+
+    def _abrir_menu_adicionar(self, evento=None) -> None:
+        if evento is not None and isinstance(evento.widget, (tk.Entry, ttk.Entry)):
+            return
+
+        x = self.raiz.winfo_pointerx()
+        y = self.raiz.winfo_pointery()
+        self.menu_shift_a.tk_popup(x, y)
 
     def _remover_objeto(self) -> None:
         nome = self._nome_selecionado()
@@ -558,7 +686,10 @@ class Aplicacao:
 
         objeto = self.display_file.buscar(nome)
 
-        # passa o angulo da window p translacao seguir o "p cima" do usuario
+        if isinstance(objeto, Objeto3D):
+            DialogoTransformacao3D(self.raiz, objeto, self.desenhar, aba)
+            return
+
         DialogoTransformacao(self.raiz, objeto, self.desenhar, aba, self.window.angulo)
 
     def _abrir_menu_de_contexto(self, evento) -> None:
@@ -688,13 +819,56 @@ class Aplicacao:
 
         self._rotacionar_window(angulo)
 
+    def _orbitar_para_cima(self, evento=None) -> None:
+        self.window.orbitar_vertical(PASSO_ORBITA)
+        self.desenhar()
+
+    def _orbitar_para_baixo(self, evento=None) -> None:
+        self.window.orbitar_vertical(-PASSO_ORBITA)
+        self.desenhar()
+
+    def _orbitar_para_esquerda(self, evento=None) -> None:
+        self.window.orbitar_horizontal(-PASSO_ORBITA)
+        self.desenhar()
+
+    def _orbitar_para_direita(self, evento=None) -> None:
+        self.window.orbitar_horizontal(PASSO_ORBITA)
+        self.desenhar()
+
+    def _mudar_vista(self, vista) -> None:
+        self.window.definir_vista(vista)
+        self.desenhar()
+
+    def _vista_topo(self, evento=None) -> None:
+        self._mudar_vista(VISTA_TOPO)
+
+    def _vista_baixo(self, evento=None) -> None:
+        self._mudar_vista(VISTA_BAIXO)
+
+    def _vista_frente(self, evento=None) -> None:
+        self._mudar_vista(VISTA_FRENTE)
+
+    def _vista_tras(self, evento=None) -> None:
+        self._mudar_vista(VISTA_TRAS)
+
+    def _vista_direita(self, evento=None) -> None:
+        self._mudar_vista(VISTA_DIREITA)
+
+    def _vista_esquerda(self, evento=None) -> None:
+        self._mudar_vista(VISTA_ESQUERDA)
+
     def _ao_rolar_mouse(self, evento) -> None:
         if evento.delta > 0:
             self._aproximar()
         else:
             self._afastar()
 
-    def _iniciar_arraste(self, evento) -> None:
+    def _iniciar_panning(self, evento) -> None:
+        self._modo_arraste = "panning"
+        self._ultimo_arraste = (evento.x, evento.y)
+
+    def _iniciar_orbita(self, evento) -> None:
+        self._modo_arraste = "orbita"
         self._ultimo_arraste = (evento.x, evento.y)
 
     def _arrastar(self, evento) -> None:
@@ -705,18 +879,30 @@ class Aplicacao:
         pixels_x = evento.x - anterior_x
         pixels_y = evento.y - anterior_y
 
-        # drag da cena p direita é q nem mover window p esuqerda, tem q lembrar q isso é invertido
-        # eixo y cresce p baixo, ent sinal y n inverte
-        deslocamento_x = -pixels_x * self.window.largura / self.viewport.largura
-        deslocamento_y = pixels_y * self.window.altura / self.viewport.altura
+        if self._modo_arraste == "orbita":
+            self._orbitar_pelo_mouse(pixels_x, pixels_y)
+        else:
+            self._mover_pelo_mouse(pixels_x, pixels_y)
 
-        # o deslocamento ta nos eixos da tela, a window converte p WC c o angulo dela
-        self.window.mover_relativo(deslocamento_x, deslocamento_y)
         self._ultimo_arraste = (evento.x, evento.y)
         self.desenhar()
 
+    def _orbitar_pelo_mouse(self, pixels_x: float, pixels_y: float) -> None:
+        if pixels_x != 0:
+            self.window.orbitar_horizontal(-pixels_x * GRAUS_POR_PIXEL)
+
+        if pixels_y != 0:
+            self.window.orbitar_vertical(pixels_y * GRAUS_POR_PIXEL)
+
+    def _mover_pelo_mouse(self, pixels_x: float, pixels_y: float) -> None:
+        deslocamento_x = -pixels_x * self.window.largura / self.viewport.largura
+        deslocamento_y = pixels_y * self.window.altura / self.viewport.altura
+
+        self.window.mover_relativo(deslocamento_x, deslocamento_y)
+
     def _finalizar_arraste(self, evento=None) -> None:
         self._ultimo_arraste = None
+        self._modo_arraste = None
 
     def _ao_redimensionar_canvas(self, evento) -> None:
         if evento.width <= 1 or evento.height <= 1:
@@ -802,6 +988,18 @@ class Aplicacao:
             escrever_mundo(self.display_file, caminho)
         except Exception as erro:
             messagebox.showerror("Erro", f"Não foi possível salvar o arquivo:\n{erro}")
+
+
+def _formatar_vetor(vetor, casas: int) -> str:
+    componentes = []
+
+    for componente in vetor:
+        if abs(componente) < 0.5 * 10 ** -casas:
+            componente = 0.0
+
+        componentes.append(f"{componente:.{casas}f}")
+
+    return "(" + ", ".join(componentes) + ")"
 
 
 def _distancia_ponto_segmento(px, py, x1, y1, x2, y2) -> float:

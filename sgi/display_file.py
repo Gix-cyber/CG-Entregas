@@ -1,7 +1,7 @@
 from typing import Iterator, List
 
 from sgi.objetos import ObjetoGrafico
-from sgi.transformacoes import Matriz, transformar_ponto
+from sgi.transformacoes3d import Matriz4, transformar_ponto
 
 
 class DisplayFile:
@@ -26,14 +26,13 @@ class DisplayFile:
     def limpar(self) -> None:
         self._objetos = []
 
-    #atualiza a cache em SCN de todos os objs c a matriz de normalizacao da window.
-    #so a cache muda, as coordenadas em WC continuam iguais
-    def normalizar(self, matriz: Matriz) -> None:
+    def normalizar(self, matriz: Matriz4) -> None:
         for objeto in self._objetos:
             normalizadas = []
 
-            for coordenada in objeto.coordenadas:
-                normalizadas.append(transformar_ponto(coordenada, matriz))
+            for coordenada in objeto.coordenadas_3d():
+                x, y, _ = transformar_ponto(coordenada, matriz)
+                normalizadas.append((x, y))
 
             objeto.coordenadas_normalizadas = normalizadas
 
