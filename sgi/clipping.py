@@ -264,3 +264,27 @@ PRIMITIVA_SEGMENTO = "segmento"
 PRIMITIVA_POLIGONO = "poligono"
 
 Primitiva = Tuple[str, List[Coordenada]]
+
+
+#recorte 3D contra o plano z = limite, mantendo o lado z <= limite (na frente do COP)
+def clipar_plano_proximo(inicio, fim, limite: float):
+    inicio_dentro = inicio[2] <= limite
+    fim_dentro = fim[2] <= limite
+
+    if inicio_dentro and fim_dentro:
+        return [inicio, fim]
+
+    if not inicio_dentro and not fim_dentro:
+        return None
+
+    t = (limite - inicio[2]) / (fim[2] - inicio[2])
+    intersecao = (
+        inicio[0] + t * (fim[0] - inicio[0]),
+        inicio[1] + t * (fim[1] - inicio[1]),
+        limite,
+    )
+
+    if inicio_dentro:
+        return [inicio, intersecao]
+
+    return [intersecao, fim]

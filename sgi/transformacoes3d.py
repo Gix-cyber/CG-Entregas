@@ -301,3 +301,24 @@ def matriz_resultante(transformacoes: List[Transformacao3D], centro_original: Co
         acumulada = multiplicar(acumulada, transformacao.matriz(centro_atual))
 
     return acumulada
+
+
+# COP na origem olhando p -z, plano de projecao em z = -d. Vetor linha: w = -z / d
+def matriz_perspectiva(distancia: float) -> Matriz4:
+    return [
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, -1.0 / distancia],
+        [0.0, 0.0, 0.0, 0.0],
+    ]
+
+
+def transformar_ponto_homogeneo(coordenada: Coordenada3D, matriz: Matriz4) -> Coordenada3D:
+    x, y, z = coordenada
+
+    novo_x = x * matriz[0][0] + y * matriz[1][0] + z * matriz[2][0] + matriz[3][0]
+    novo_y = x * matriz[0][1] + y * matriz[1][1] + z * matriz[2][1] + matriz[3][1]
+    novo_z = x * matriz[0][2] + y * matriz[1][2] + z * matriz[2][2] + matriz[3][2]
+    novo_w = x * matriz[0][3] + y * matriz[1][3] + z * matriz[2][3] + matriz[3][3]
+
+    return novo_x / novo_w, novo_y / novo_w, novo_z / novo_w

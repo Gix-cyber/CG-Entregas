@@ -20,7 +20,7 @@ from sgi.descritor_obj import escrever_mundo, ler_mundo
 from sgi.display_file import DisplayFile
 from sgi.objetos import COR_PADRAO, TIPOS, Wireframe, criar_objeto, interpretar_coordenadas
 from sgi.objetos3d import MALHAS, Objeto3D, criar_cubo, criar_piramide, interpretar_segmentos
-from sgi.transformacoes3d import comprimento, transformar_ponto
+from sgi.transformacoes3d import comprimento
 from sgi.viewport import Viewport
 from sgi.window import (
     VISTA_BAIXO,
@@ -29,6 +29,7 @@ from sgi.window import (
     VISTA_FRENTE,
     VISTA_TOPO,
     VISTA_TRAS,
+    DISTANCIA_COP_PADRAO,
     Window,
 )
 
@@ -44,6 +45,9 @@ PASSO_ROTACAO = 15
 PASSO_ORBITA = 15
 
 GRAUS_POR_PIXEL = 0.5
+
+DISTANCIA_COP_MIN = 50
+DISTANCIA_COP_MAX = 4000
 
 FRACAO_TAMANHO_MALHA = 0.25
 
@@ -310,6 +314,7 @@ class Aplicacao:
         botao_rotacionar.pack(side=tk.LEFT, padx=(4, 0))
 
         self._criar_controles_de_orbita(quadro)
+        self._criar_controles_de_projecao(quadro)
 
         self.rotulo_window = ttk.Label(quadro, justify=tk.LEFT)
         self.rotulo_window.pack(anchor=tk.W, pady=(4, 0))
@@ -341,6 +346,64 @@ class Aplicacao:
         botao_topo.pack(fill=tk.X)
         botao_frente.pack(fill=tk.X)
         botao_lado.pack(fill=tk.X)
+
+    def _criar_controles_de_projecao(self, quadro: ttk.Frame) -> None:
+        projecao = ttk.LabelFrame(quadro, text="Projeção (NumPad 5)", padding=2)
+        projecao.pack(fill=tk.X, pady=(4, 0))
+
+        self.projecao_perspectiva = tk.BooleanVar(value=self.window.perspectiva)
+
+        opcoes = ttk.Frame(projecao)
+        opcoes.pack(fill=tk.X)
+
+        opcao_paralela = ttk.Radiobutton(
+            opcoes,
+            text="Paralela",
+            value=False,
+            variable=self.projecao_perspectiva,
+            command=self._aplicar_projecao,
+        )
+        opcao_perspectiva = ttk.Radiobutton(
+            opcoes,
+            text="Perspectiva",
+            value=True,
+            variable=self.projecao_perspectiva,
+            command=self._aplicar_projecao,
+        )
+
+        opcao_paralela.pack(side=tk.LEFT)
+        opcao_perspectiva.pack(side=tk.LEFT, padx=(8, 0))
+
+        # d pequeno = grande angular, d grande = teleobjetiva
+        self.rotulo_distancia_cop = ttk.Label(projecao)
+        self.rotulo_distancia_cop.pack(anchor=tk.W)
+
+        self.escala_distancia_cop = ttk.Scale(
+            projecao,
+            from_=DISTANCIA_COP_MIN,
+            to=DISTANCIA_COP_MAX,
+            value=DISTANCIA_COP_PADRAO,
+            command=self._mudar_distancia_cop,
+        )
+        self.escala_distancia_cop.pack(fill=tk.X)
+
+        self._atualizar_rotulo_distancia_cop()
+
+    def _aplicar_projecao(self) -> None:
+        self.window.perspectiva = self.projecao_perspectiva.get()
+        self.desenhar()
+
+    def _alternar_projecao(self, evento=None) -> None:
+        self.projecao_perspectiva.set(not self.projecao_perspectiva.get())
+        self._aplicar_projecao()
+
+    def _mudar_distancia_cop(self, valor) -> None:
+        self.window.definir_distancia_cop(float(valor))
+        self._atualizar_rotulo_distancia_cop()
+        self.desenhar()
+
+    def _atualizar_rotulo_distancia_cop(self) -> None:
+        self.rotulo_distancia_cop.configure(text=f"Distância do COP (d): {self.window.distancia_cop:.0f}")
 
     def _criar_canvas(self) -> None:
         self.canvas = tk.Canvas(
@@ -418,6 +481,8 @@ class Aplicacao:
             (("<Control-KP_3>", "<Control-KP_Next>"), self._vista_esquerda),
         ]
 
+        atalhos_de_vista.append((("<KP_5>", "<KP_Begin>"), self._alternar_projecao))
+
         for teclas, comando in atalhos_de_orbita + atalhos_de_vista:
             for tecla in teclas:
                 self.canvas.bind(tecla, comando)
@@ -466,7 +531,7 @@ class Aplicacao:
         self.canvas.delete("all")
 
         # gera a descricao em SCN de todo o mundo antes de desenhar
-        self.display_file.normalizar(self.window.matriz_normalizacao())
+        self.display_file.normalizar(self.window)
 
         self._desenhar_eixos()
         self._desenhar_moldura()
@@ -492,13 +557,15 @@ class Aplicacao:
             ((0.0, 0.0, -alcance), (0.0, 0.0, alcance)),
         ]
 
-        matriz = self.window.matriz_normalizacao()
         algoritmo_reta = self._algoritmo_reta()
 
         for (inicio, fim), cor in zip(eixos, CORES_EIXOS):
-            # projecao paralela ortogonal: dps da matriz o z é ignorado
-            inicio_x, inicio_y, _ = transformar_ponto(inicio, matriz)
-            fim_x, fim_y, _ = transformar_ponto(fim, matriz)
+            projetado = self.window.projetar_segmento(inicio, fim)
+
+            if projetado is None:
+                continue
+
+            (inicio_x, inicio_y), (fim_x, fim_y) = projetado
 
             if math.hypot(fim_x - inicio_x, fim_y - inicio_y) < 1e-9:
                 continue
@@ -529,6 +596,9 @@ class Aplicacao:
     #pipeline: WC -> SCN (cache do display file) -> clipping -> viewport.
     #so as primitivas q sobram do clipping passam pela transformada de viewport
     def _desenhar_objeto(self, objeto, cor: str, espessura_extra: int) -> None:
+        if len(objeto.coordenadas_normalizadas) == 0:
+            return
+
         primitivas = objeto.clipar(self._algoritmo_reta())
 
         for tipo, coordenadas in primitivas:
@@ -583,6 +653,7 @@ class Aplicacao:
             f"  VPN: {_formatar_vetor(self.window.vpn, 2)}\n"
             f"  VUP: {_formatar_vetor(self.window.vup, 2)}\n"
             f"  VPN alinhado: {_formatar_vetor(self.window.vpn_alinhado(), 2)}\n"
+            f"  COP: {_formatar_vetor(self.window.cop, 1)}\n"
             f"  tamanho: {self.window.largura:.1f} x {self.window.altura:.1f}"
         )
         self.rotulo_window.configure(text=texto)
@@ -728,6 +799,9 @@ class Aplicacao:
         return mais_proximo
 
     def _distancia_ate_objeto(self, objeto, x: float, y: float) -> float:
+        if len(objeto.coordenadas_normalizadas) == 0:
+            return float("inf")
+
         segmentos = objeto.segmentos_normalizados()
 
         if len(segmentos) == 0:

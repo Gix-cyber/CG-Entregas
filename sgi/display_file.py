@@ -1,7 +1,7 @@
 from typing import Iterator, List
 
 from sgi.objetos import ObjetoGrafico
-from sgi.transformacoes3d import Matriz4, transformar_ponto
+from sgi.objetos3d import Objeto3D
 
 
 class DisplayFile:
@@ -26,15 +26,31 @@ class DisplayFile:
     def limpar(self) -> None:
         self._objetos = []
 
-    def normalizar(self, matriz: Matriz4) -> None:
+    def normalizar(self, window) -> None:
         for objeto in self._objetos:
-            normalizadas = []
+            if isinstance(objeto, Objeto3D):
+                objeto.coordenadas_normalizadas = self._normalizar_segmentos(objeto, window)
+                continue
 
-            for coordenada in objeto.coordenadas_3d():
-                x, y, _ = transformar_ponto(coordenada, matriz)
-                normalizadas.append((x, y))
+            normalizadas = window.projetar(objeto.coordenadas_3d())
+
+            if normalizadas is None:
+                normalizadas = []
 
             objeto.coordenadas_normalizadas = normalizadas
+
+    def _normalizar_segmentos(self, objeto: Objeto3D, window) -> list:
+        normalizadas = []
+
+        for inicio, fim in objeto.segmentos_3d:
+            projetado = window.projetar_segmento(inicio.como_tupla(), fim.como_tupla())
+
+            if projetado is None:
+                continue
+
+            normalizadas.extend(projetado)
+
+        return normalizadas
 
     def buscar(self, nome: str):
         for objeto in self._objetos:

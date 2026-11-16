@@ -1,7 +1,9 @@
 #TODO: rever zoom c objetos adicionados, tem alguma coisa estranha em relacao aos pixels (testar c reta)
 
 import math
+from typing import List, Optional, Tuple
 
+from sgi.clipping import clipar_plano_proximo
 from sgi.objetos3d import Ponto3D
 from sgi.transformacoes3d import (
     Coordenada3D,
@@ -9,6 +11,7 @@ from sgi.transformacoes3d import (
     Vetor3D,
     compor,
     matriz_escalonamento,
+    matriz_perspectiva,
     matriz_rotacao_x,
     matriz_rotacao_y,
     matriz_rotacao_z,
@@ -18,6 +21,8 @@ from sgi.transformacoes3d import (
     preparar_rotacao_eixo_arbitrario,
     produto_vetorial,
     somar,
+    transformar_ponto,
+    transformar_ponto_homogeneo,
     transformar_vetor,
 )
 
@@ -28,6 +33,9 @@ VISTA_TRAS = ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
 VISTA_DIREITA = ((1.0, 0.0, 0.0), (0.0, 0.0, 1.0))
 VISTA_ESQUERDA = ((-1.0, 0.0, 0.0), (0.0, 0.0, 1.0))
 
+DISTANCIA_COP_PADRAO = 600.0
+DISTANCIA_PLANO_PROXIMO = 1.0
+
 
 class Window:
 
@@ -37,10 +45,22 @@ class Window:
         self.vup: Vetor3D = VISTA_TOPO[1]
         self.largura = xmax - xmin
         self.altura = ymax - ymin
+        self.perspectiva = False
+        self.distancia_cop = DISTANCIA_COP_PADRAO
 
     @property
     def centro(self) -> Coordenada3D:
         return self.vrp.como_tupla()
+
+    @property
+    def cop(self) -> Coordenada3D:
+        return somar(self.centro, multiplicar_escalar(self.vpn, self.distancia_cop))
+
+    def definir_distancia_cop(self, distancia: float) -> None:
+        if distancia <= DISTANCIA_PLANO_PROXIMO:
+            raise ValueError("A distância do COP deve ser maior que a do plano próximo.")
+
+        self.distancia_cop = distancia
 
     @property
     def eixo_u(self) -> Vetor3D:
@@ -132,8 +152,7 @@ class Window:
     def vpn_alinhado(self) -> Vetor3D:
         return transformar_vetor(self.vpn, self._matriz_alinhamento_vpn())
 
-    def matriz_normalizacao(self) -> Matriz4:
-        x, y, z = self.centro
+    def _matriz_orientacao(self) -> Matriz4:
         alinhamento = self._matriz_alinhamento_vpn()
 
         # angulo do VUP ja alinhado em relacao a y. Rotacao em z faz x' = x cos - y sen
@@ -141,8 +160,85 @@ class Window:
         angulo_z = math.degrees(math.atan2(vup_x, vup_y))
 
         return compor([
-            matriz_translacao(-x, -y, -z),
             alinhamento,
             matriz_rotacao_z(angulo_z),
-            matriz_escalonamento(2 / self.largura, 2 / self.altura, 1.0),
         ])
+
+    def _matriz_escala_scn(self) -> Matriz4:
+        return matriz_escalonamento(2 / self.largura, 2 / self.altura, 1.0)
+
+    def matriz_normalizacao(self) -> Matriz4:
+        x, y, z = self.centro
+
+        return compor([
+            matriz_translacao(-x, -y, -z),
+            self._matriz_orientacao(),
+            self._matriz_escala_scn(),
+        ])
+
+    def matriz_vista_perspectiva(self) -> Matriz4:
+        x, y, z = self.cop
+
+        return compor([
+            matriz_translacao(-x, -y, -z),
+            self._matriz_orientacao(),
+        ])
+
+    def matriz_projecao_perspectiva(self) -> Matriz4:
+        return compor([
+            matriz_perspectiva(self.distancia_cop),
+            self._matriz_escala_scn(),
+        ])
+
+    def projetar(self, coordenadas: List[Coordenada3D]) -> Optional[List[Tuple[float, float]]]:
+        if not self.perspectiva:
+            return self._projetar_paralela(coordenadas)
+
+        vista = self.matriz_vista_perspectiva()
+        projecao = self.matriz_projecao_perspectiva()
+        projetadas = []
+
+        for coordenada in coordenadas:
+            x, y, z = transformar_ponto(coordenada, vista)
+
+            if z > -DISTANCIA_PLANO_PROXIMO:
+                return None
+
+            x, y, _ = transformar_ponto_homogeneo((x, y, z), projecao)
+            projetadas.append((x, y))
+
+        return projetadas
+
+    def projetar_segmento(self, inicio: Coordenada3D, fim: Coordenada3D):
+        if not self.perspectiva:
+            return self._projetar_paralela([inicio, fim])
+
+        vista = self.matriz_vista_perspectiva()
+        projecao = self.matriz_projecao_perspectiva()
+
+        recortado = clipar_plano_proximo(
+            transformar_ponto(inicio, vista),
+            transformar_ponto(fim, vista),
+            -DISTANCIA_PLANO_PROXIMO,
+        )
+
+        if recortado is None:
+            return None
+
+        projetadas = []
+
+        for coordenada in recortado:
+            x, y, _ = transformar_ponto_homogeneo(coordenada, projecao)
+            projetadas.append((x, y))
+
+        return projetadas
+
+    def _projetar_paralela(self, coordenadas: List[Coordenada3D]) -> List[Tuple[float, float]]:
+        matriz = self.matriz_normalizacao()
+        projetadas = []
+
+        for coordenada in coordenadas:
+            x, y, _ = transformar_ponto(coordenada, matriz)
+            projetadas.append((x, y))
+
+        return projetadas
