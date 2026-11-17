@@ -20,6 +20,7 @@ from sgi.descritor_obj import escrever_mundo, ler_mundo
 from sgi.display_file import DisplayFile
 from sgi.objetos import COR_PADRAO, TIPOS, Wireframe, criar_objeto, interpretar_coordenadas
 from sgi.objetos3d import MALHAS, Objeto3D, criar_cubo, criar_piramide, interpretar_segmentos
+from sgi.superficies import SuperficieBezier, interpretar_retalhos
 from sgi.transformacoes3d import comprimento
 from sgi.viewport import Viewport
 from sgi.window import (
@@ -52,6 +53,7 @@ DISTANCIA_COP_MAX = 4000
 FRACAO_TAMANHO_MALHA = 0.25
 
 TIPO_OBJETO_3D = Objeto3D.tipo
+TIPO_SUPERFICIE = SuperficieBezier.tipo
 
 # a viewport é menor q o canvas, c uma moldura em volta. Assim se o clipping deixar
 # passar alguma coisa ela aparece fora da moldura, em vez de ser cortada pelo proprio canvas
@@ -217,6 +219,15 @@ class Aplicacao:
         )
         opcao_3d.pack(anchor=tk.W)
 
+        opcao_superficie = ttk.Radiobutton(
+            quadro,
+            text="Superfície Bézier",
+            value=TIPO_SUPERFICIE,
+            variable=self.tipo_selecionado,
+            command=self._atualizar_opcao_de_preenchimento,
+        )
+        opcao_superficie.pack(anchor=tk.W)
+
         # so faz sentido p wireframe, ent fica desabilitado nos outros tipos
         self.preenchido_selecionado = tk.BooleanVar(value=False)
         self.opcao_preenchido = ttk.Checkbutton(
@@ -230,6 +241,8 @@ class Aplicacao:
         ttk.Label(quadro, text="Curva: 4, 7, 10, ... pontos de controle", foreground="gray").pack(anchor=tk.W)
         ttk.Label(quadro, text="B-Spline: 4 ou mais pontos de controle", foreground="gray").pack(anchor=tk.W)
         ttk.Label(quadro, text="Objeto 3D: (x, y, z) em pares, 1 par = 1 segmento", foreground="gray").pack(anchor=tk.W)
+        ttk.Label(quadro, text="Superfície: 4 pontos (x, y, z) por linha, linhas", foreground="gray").pack(anchor=tk.W)
+        ttk.Label(quadro, text="separadas por \";\", 4 linhas = 1 retalho (16 pontos)", foreground="gray").pack(anchor=tk.W)
         self.entrada_coordenadas = ttk.Entry(quadro)
         self.entrada_coordenadas.pack(fill=tk.X)
         self.entrada_coordenadas.bind("<Return>", self._adicionar_objeto)
@@ -671,6 +684,9 @@ class Aplicacao:
             if tipo == TIPO_OBJETO_3D:
                 segmentos = interpretar_segmentos(texto)
                 objeto = Objeto3D(nome, segmentos, self.cor_selecionada)
+            elif tipo == TIPO_SUPERFICIE:
+                retalhos = interpretar_retalhos(texto)
+                objeto = SuperficieBezier(nome, retalhos, self.cor_selecionada)
             else:
                 coordenadas = interpretar_coordenadas(texto)
                 preenchido = self.preenchido_selecionado.get()

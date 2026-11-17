@@ -14,6 +14,7 @@ from sgi.objetos import (
     Wireframe,
 )
 from sgi.objetos3d import Objeto3D
+from sgi.superficies import SuperficieBezier
 from sgi.transformacoes3d import Coordenada3D
 
 # abaixo disso o z do vertice conta como 0, p decidir se um obj do .obj é 2D ou 3D
@@ -27,6 +28,9 @@ TOLERANCIA_Z = 1e-9
 class DescritorOBJ:
 
     def descrever(self, objeto: ObjetoGrafico, primeiro_indice: int) -> Tuple[List[str], int]:
+        if isinstance(objeto, SuperficieBezier):
+            return _descrever_superficie(objeto, primeiro_indice)
+
         if isinstance(objeto, Objeto3D):
             return _descrever_objeto_3d(objeto, primeiro_indice)
 
@@ -76,6 +80,35 @@ def _descrever_objeto_3d(objeto: Objeto3D, primeiro_indice: int) -> Tuple[List[s
         indice_inicio = indice_do_vertice[inicio.como_tupla()]
         indice_fim = indice_do_vertice[fim.como_tupla()]
         linhas.append(f"l {indice_inicio} {indice_fim}")
+
+    return linhas, len(vertices)
+
+
+#cada retalho vira um "surf" c os 16 pontos de controle linha a linha da matriz G
+def _descrever_superficie(objeto: SuperficieBezier, primeiro_indice: int) -> Tuple[List[str], int]:
+    linhas = [f"o {objeto.nome}"]
+    linhas.append(f"usemtl {nome_do_material(objeto.cor)}")
+
+    vertices = objeto.vertices()
+    indice_do_vertice = {}
+
+    for posicao, (x, y, z) in enumerate(vertices):
+        linhas.append(f"v {x} {y} {z}")
+        indice_do_vertice[(x, y, z)] = primeiro_indice + posicao
+
+    linhas.append("cstype bezier")
+    linhas.append("deg 3 3")
+
+    for retalho in objeto.retalhos:
+        indices = []
+
+        for linha in retalho:
+            for ponto in linha:
+                indices.append(str(indice_do_vertice[ponto.como_tupla()]))
+
+        linhas.append("surf 0.0 1.0 0.0 1.0 " + " ".join(indices))
+
+    linhas.append("end")
 
     return linhas, len(vertices)
 
@@ -153,6 +186,7 @@ def _escrever_materiais(cores: List[CorRGB], caminho_mtl: str) -> None:
 #e so x e y sao usados:
 #p vira ponto, l c 2 vertices vira reta, l fechado vira wireframe de arame,
 #f vira wireframe preenchido, curv vira curva de bezier ou B-Spline (conforme o cstype) e l aberto c + de 2 vertices vira uma reta por segmento
+#Os surf (16 pontos cada) de um msm obj viram os retalhos de uma unica superficie de Bezier
 def ler_mundo(caminho: str) -> List[ObjetoGrafico]:
     leitor = _LeitorOBJ(os.path.dirname(caminho))
 
@@ -185,6 +219,8 @@ class _LeitorOBJ:
         self.elementos_no_atual = 0
 
         self.arestas_pendentes: List[Tuple[str, List[int], CorRGB]] = []
+        self.retalhos_pendentes: List[List[List[Coordenada3D]]] = []
+        self.cor_dos_retalhos = COR_PADRAO
 
     def interpretar_linha(self, linha: str) -> None:
         partes = linha.split("#")[0].split()
@@ -232,10 +268,41 @@ class _LeitorOBJ:
                 self._adicionar(BSpline, coordenadas)
             else:
                 self._adicionar(Curva2D, coordenadas)
+        elif comando == "surf":
+            self._adicionar_retalho(argumentos)
 
         # o resto (vt, vn, s, w, deg, parm, end...) n tem uso num mundo de pontos e linhas
 
+    def _adicionar_retalho(self, argumentos: List[str]) -> None:
+        if self.tipo_de_curva_atual != "bezier":
+            raise ValueError("só superfícies bicúbicas de Bézier (cstype bezier) são suportadas")
+
+        indices = self._indices(argumentos[4:])
+
+        if len(indices) != 16:
+            raise ValueError("um retalho bicúbico precisa de 16 pontos de controle")
+
+        retalho = []
+
+        for inicio in range(0, 16, 4):
+            linha = []
+
+            for indice in indices[inicio:inicio + 4]:
+                linha.append(self.vertices[indice])
+
+            retalho.append(linha)
+
+        if len(self.retalhos_pendentes) == 0:
+            self.cor_dos_retalhos = self.cor_atual
+
+        self.retalhos_pendentes.append(retalho)
+
     def finalizar_grupo(self) -> None:
+        if len(self.retalhos_pendentes) > 0:
+            retalhos = self.retalhos_pendentes
+            self.retalhos_pendentes = []
+            self._adicionar(SuperficieBezier, retalhos, cor=self.cor_dos_retalhos)
+
         pendentes = self.arestas_pendentes
         self.arestas_pendentes = []
 

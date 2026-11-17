@@ -1,0 +1,19 @@
+# paralelepipedo 300 x 160 x 100 c arestas "l", vira um objeto 3D (modelo de arame)
+mtllib teste.mtl
+
+o paralelepipedo
+usemtl vermelho
+v -150 -80 -50
+v 150 -80 -50
+v 150 80 -50
+v -150 80 -50
+v -150 -80 50
+v 150 -80 50
+v 150 80 50
+v -150 80 50
+l 1 2 3 4 1
+l 5 6 7 8 5
+l 1 5
+l 2 6
+l 3 7
+l 4 8
